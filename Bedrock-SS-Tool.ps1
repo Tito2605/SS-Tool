@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # NEXUS ANTICHEAT v5.0 PROFESSIONAL
 # Sistema Avanzado de Detección - Minecraft Bedrock
 # Inspirado en Ocean & Echo AntiCheat
@@ -41,7 +41,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $logFile = "$outputDir\NEXUS_MASTER_LOG.txt"
 $detections = @()
 $startTime = Get-Date
-$totalChecks = 20
+$totalChecks = 22
 $currentCheck = 0
 
 # Base de datos de firmas (expandida)
@@ -75,6 +75,144 @@ $cheatSignatures = @{
         "wisefolderhider", "iobit", "unlocker", "hidewindow", "noobnoobserver",
         "antiobs", "screenblock", "antiscreenshare", "bypasser", "spoofer",
         "hwid_spoof", "mac_spoof", "serial_spoof", "volume_spoof"
+    )
+}
+
+# Firmas de archivos por magic bytes (primeros bytes del archivo)
+$fileMagicBytes = @{
+    "EXE" = @("4D5A")  # MZ
+    "DLL" = @("4D5A")  # MZ
+    "ZIP" = @("504B0304", "504B0506", "504B0708")  # PK
+    "RAR" = @("526172211A07")  # Rar!
+    "7Z" = @("377ABCAF271C")
+    "PNG" = @("89504E47")
+    "JPG" = @("FFD8FF")
+    "GIF" = @("474946")
+    "PDF" = @("25504446")
+    "JAR" = @("504B0304")  # Es un ZIP
+    "CLASS" = @("CAFEBABE")  # Java class
+}
+
+function Get-FileMagicBytes {
+    param([string]$Path, [int]$ByteCount = 8)
+    
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        if ($bytes.Length -eq 0) { return "EMPTY" }
+        
+        $magicBytes = $bytes[0..[Math]::Min($ByteCount - 1, $bytes.Length - 1)]
+        $hex = ($magicBytes | ForEach-Object { $_.ToString("X2") }) -join ""
+        return $hex
+    } catch {
+        return $null
+    }
+}
+
+function Test-FileExtensionMismatch {
+    param([string]$Path, [string]$Extension)
+    
+    $magic = Get-FileMagicBytes -Path $Path -ByteCount 8
+    if (-not $magic -or $magic -eq "EMPTY") { return $null }
+    
+    # Verificar si es ejecutable con extensión falsa
+    if ($Extension -notin @(".exe", ".dll", ".scr", ".com")) {
+        if ($magic -like "4D5A*") {
+            return @{
+                RealType = "Executable (EXE/DLL)"
+                FakeExtension = $Extension
+                ThreatLevel = 95
+                Reason = "Archivo ejecutable disfrazado"
+            }
+        }
+    }
+    
+    # Verificar archivos comprimidos con extensión falsa
+    if ($Extension -notin @(".zip", ".jar", ".apk", ".docx", ".xlsx")) {
+        if ($magic -like "504B*") {
+            return @{
+                RealType = "ZIP/JAR Archive"
+                FakeExtension = $Extension
+                ThreatLevel = 80
+                Reason = "Archivo comprimido disfrazado"
+            }
+        }
+    }
+    
+    # Verificar imágenes falsas
+    if ($Extension -eq ".png" -and $magic -notlike "89504E47*") {
+        return @{
+            RealType = "Not PNG"
+            FakeExtension = ".png"
+            ActualMagic = $magic
+            ThreatLevel = 85
+            Reason = "Extensión .png falsa"
+        }
+    }
+    
+    if ($Extension -eq ".jpg" -and $magic -notlike "FFD8FF*") {
+        return @{
+            RealType = "Not JPG"
+            FakeExtension = ".jpg"
+            ActualMagic = $magic
+            ThreatLevel = 85
+            Reason = "Extensión .jpg falsa"
+        }
+    }
+    
+    return $null
+}
+
+# Base de datos de archivos conocidos de cheats
+$knownCheatFiles = @{
+    # Clients de Minecraft Bedrock
+    Clients = @(
+        @{Name="horion.dll"; Hash=""; ThreatLevel=100},
+        @{Name="Horion.exe"; Hash=""; ThreatLevel=100},
+        @{Name="onix.dll"; Hash=""; ThreatLevel=100},
+        @{Name="OnixClient.exe"; Hash=""; ThreatLevel=100},
+        @{Name="packet.dll"; Hash=""; ThreatLevel=95},
+        @{Name="PacketClient.exe"; Hash=""; ThreatLevel=95},
+        @{Name="crystal.dll"; Hash=""; ThreatLevel=95},
+        @{Name="CrystalClient.exe"; Hash=""; ThreatLevel=95},
+        @{Name="zephyr.dll"; Hash=""; ThreatLevel=90},
+        @{Name="ZephyrClient.exe"; Hash=""; ThreatLevel=90},
+        @{Name="ambrosial.dll"; Hash=""; ThreatLevel=90},
+        @{Name="element.dll"; Hash=""; ThreatLevel=90},
+        @{Name="ElementClient.exe"; Hash=""; ThreatLevel=90},
+        @{Name="toolbox.apk"; Hash=""; ThreatLevel=85},
+        @{Name="nitr0.dll"; Hash=""; ThreatLevel=85},
+        @{Name="lakeside.dll"; Hash=""; ThreatLevel=85}
+    )
+    
+    # Inyectores y loaders
+    Injectors = @(
+        @{Name="injector.exe"; Hash=""; ThreatLevel=90},
+        @{Name="dll_injector.exe"; Hash=""; ThreatLevel=90},
+        @{Name="xenos.exe"; Hash=""; ThreatLevel=85},
+        @{Name="extreme injector.exe"; Hash=""; ThreatLevel=85},
+        @{Name="LoadLibrary.exe"; Hash=""; ThreatLevel=80},
+        @{Name="ManualMap.exe"; Hash=""; ThreatLevel=80},
+        @{Name="ClientLoader.exe"; Hash=""; ThreatLevel=85},
+        @{Name="cheat_loader.exe"; Hash=""; ThreatLevel=90}
+    )
+    
+    # AutoClickers
+    AutoClickers = @(
+        @{Name="AutoClicker.exe"; Hash=""; ThreatLevel=75},
+        @{Name="OpAutoClicker.exe"; Hash=""; ThreatLevel=80},
+        @{Name="ghost_client.jar"; Hash=""; ThreatLevel=85},
+        @{Name="JNativeHook.dll"; Hash=""; ThreatLevel=70},
+        @{Name="jna-4.5.2.jar"; Hash=""; ThreatLevel=65},
+        @{Name="clicks_tmp.mp3"; Hash=""; ThreatLevel=60}
+    )
+    
+    # Herramientas de bypass
+    Bypass = @(
+        @{Name="NoobNoObserver.exe"; Hash=""; ThreatLevel=95},
+        @{Name="HideWindow.exe"; Hash=""; ThreatLevel=85},
+        @{Name="wisefs.dat"; Hash=""; ThreatLevel=90},
+        @{Name="WiseFolderHider.exe"; Hash=""; ThreatLevel=85},
+        @{Name="IObitUnlocker.exe"; Hash=""; ThreatLevel=70}
     )
 }
 
@@ -1668,6 +1806,1056 @@ function Invoke-EventLogAnalysis {
 }
 
 # ============================================
+# MÓDULO 21: DETECCIÓN AVANZADA DE ARCHIVOS
+# ============================================
+
+function Invoke-AdvancedFileDetection {
+    Update-Progress "Escaneando archivos en todo el sistema..."
+    Write-Log "`n=== MÓDULO 21: DETECCIÓN AVANZADA DE ARCHIVOS ===" "Cyan"
+    
+    $fileFindings = @()
+    $totalScanned = 0
+    
+    # Carpetas críticas para escanear
+    $criticalPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA",
+        "$env:TEMP",
+        "C:\Users\Public",
+        "C:\ProgramData"
+    )
+    
+    Write-Log "Iniciando escaneo profundo de archivos..." "Yellow"
+    
+    # ===== FASE 1: BUSCAR ARCHIVOS CONOCIDOS =====
+    Write-Log "Fase 1: Buscando archivos conocidos de cheats..." "Gray"
+    
+    foreach ($category in $knownCheatFiles.Keys) {
+        foreach ($cheatFile in $knownCheatFiles[$category]) {
+            $fileName = $cheatFile.Name
+            
+            # Buscar en carpetas críticas
+            foreach ($path in $criticalPaths) {
+                if (Test-Path $path) {
+                    $found = Get-ChildItem -Path $path -Filter $fileName -Recurse -ErrorAction SilentlyContinue -Force |
+                        Select-Object -First 5
+                    
+                    foreach ($file in $found) {
+                        $totalScanned++
+                        $hash = Get-FileHash-Safe $file.FullName
+                        
+                        Add-Detection "Archivo - Cheat Conocido Detectado" `
+                            "$fileName encontrado en $($file.DirectoryName)" `
+                            "CRITICAL" `
+                            $file.FullName `
+                            $cheatFile.ThreatLevel
+                        
+                        $fileFindings += [PSCustomObject]@{
+                            Category = $category
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Size = $file.Length
+                            Created = $file.CreationTime
+                            Modified = $file.LastWriteTime
+                            Accessed = $file.LastAccessTime
+                            Hash = $hash
+                            ThreatLevel = $cheatFile.ThreatLevel
+                            Reason = "Archivo conocido de cheat"
+                            Hidden = $file.Attributes -match "Hidden"
+                        }
+                    }
+                }
+            }
+            
+            # Buscar en disco C:\ (solo raíz y Program Files)
+            $systemPaths = @("C:\", "C:\Program Files", "C:\Program Files (x86)")
+            foreach ($sysPath in $systemPaths) {
+                $found = Get-ChildItem -Path $sysPath -Filter $fileName -ErrorAction SilentlyContinue -Force |
+                    Where-Object { -not $_.PSIsContainer } |
+                    Select-Object -First 2
+                
+                foreach ($file in $found) {
+                    $totalScanned++
+                    Add-Detection "Archivo - Cheat en Ubicación del Sistema" `
+                        "$fileName en $($file.DirectoryName)" `
+                        "CRITICAL" `
+                        $file.FullName `
+                        ($cheatFile.ThreatLevel + 5)
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 2: ARCHIVOS SOSPECHOSOS POR EXTENSIÓN =====
+    Write-Log "Fase 2: Analizando archivos sospechosos por extensión..." "Gray"
+    
+    $suspiciousExtensions = @("*.dll", "*.exe", "*.jar", "*.bat", "*.vbs", "*.ps1", "*.scr")
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            foreach ($ext in $suspiciousExtensions) {
+                $files = Get-ChildItem -Path $path -Filter $ext -Recurse -ErrorAction SilentlyContinue -Force |
+                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                    Select-Object -First 100
+                
+                foreach ($file in $files) {
+                    $totalScanned++
+                    $signatures = Test-CheatSignature $file.Name
+                    
+                    if ($signatures.Count -gt 0) {
+                        $hash = Get-FileHash-Safe $file.FullName
+                        
+                        Add-Detection "Archivo - Nombre Sospechoso" `
+                            "$($file.Name) en $($file.DirectoryName)" `
+                            "HIGH" `
+                            $file.FullName `
+                            80
+                        
+                        $fileFindings += [PSCustomObject]@{
+                            Category = "Suspicious Name"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Size = $file.Length
+                            Created = $file.CreationTime
+                            Modified = $file.LastWriteTime
+                            Hash = $hash
+                            ThreatLevel = 80
+                            Reason = "Nombre contiene palabras clave sospechosas"
+                            Signatures = ($signatures.Signature -join ", ")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 3: ARCHIVOS OCULTOS =====
+    Write-Log "Fase 3: Detectando archivos ocultos..." "Gray"
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            $hiddenFiles = Get-ChildItem -Path $path -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Attributes -match "Hidden" -and 
+                    -not $_.PSIsContainer -and
+                    $_.Extension -in @(".exe", ".dll", ".jar", ".bat", ".vbs")
+                } | Select-Object -First 50
+            
+            foreach ($file in $hiddenFiles) {
+                $totalScanned++
+                $signatures = Test-CheatSignature $file.Name
+                
+                if ($signatures.Count -gt 0 -or $file.Length -gt 1MB) {
+                    Add-Detection "Archivo - Archivo Oculto Sospechoso" `
+                        "$($file.Name) (oculto)" `
+                        "HIGH" `
+                        $file.FullName `
+                        75
+                    
+                    $fileFindings += [PSCustomObject]@{
+                        Category = "Hidden File"
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        Size = $file.Length
+                        Modified = $file.LastWriteTime
+                        ThreatLevel = 75
+                        Reason = "Archivo ejecutable oculto"
+                        Hidden = $true
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 4: ARCHIVOS SIN EXTENSIÓN O DOBLE EXTENSIÓN =====
+    Write-Log "Fase 4: Buscando archivos sin extensión o con doble extensión..." "Gray"
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            # Archivos sin extensión
+            $noExtFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    -not $_.Extension -and 
+                    $_.Length -gt 100KB -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 20
+            
+            foreach ($file in $noExtFiles) {
+                $totalScanned++
+                Add-Detection "Archivo - Sin Extensión" `
+                    "$($file.Name) sin extensión" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    60
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "No Extension"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    ThreatLevel = 60
+                    Reason = "Archivo sin extensión"
+                }
+            }
+            
+            # Doble extensión (ej: archivo.pdf.exe)
+            $doubleExtFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Name -match "\.[a-z]{3,4}\.(exe|dll|bat|vbs|scr|jar)$" -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 20
+            
+            foreach ($file in $doubleExtFiles) {
+                $totalScanned++
+                Add-Detection "Archivo - Doble Extensión Sospechosa" `
+                    "$($file.Name) con doble extensión" `
+                    "HIGH" `
+                    $file.FullName `
+                    85
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "Double Extension"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    ThreatLevel = 85
+                    Reason = "Doble extensión (posible malware)"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 5: ARCHIVOS CON TIMESTAMPS MANIPULADOS =====
+    Write-Log "Fase 5: Detectando manipulación de timestamps..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $manipulatedFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.CreationTime -gt $_.LastWriteTime -and
+                    $_.Extension -in @(".exe", ".dll", ".jar") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-14)
+                } | Select-Object -First 30
+            
+            foreach ($file in $manipulatedFiles) {
+                $totalScanned++
+                $timeDiff = ($file.CreationTime - $file.LastWriteTime).TotalHours
+                
+                if ($timeDiff -gt 1) {
+                    Add-Detection "Archivo - Timestamp Manipulado" `
+                        "$($file.Name) - Creado después de modificado ($([Math]::Round($timeDiff, 1))h diferencia)" `
+                        "HIGH" `
+                        $file.FullName `
+                        80
+                    
+                    $fileFindings += [PSCustomObject]@{
+                        Category = "Manipulated Timestamp"
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        Created = $file.CreationTime
+                        Modified = $file.LastWriteTime
+                        TimeDifference = "$([Math]::Round($timeDiff, 1)) horas"
+                        ThreatLevel = 80
+                        Reason = "Timestamp manipulado con SetFileDate o similar"
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 6: ARCHIVOS GRANDES EN TEMP =====
+    Write-Log "Fase 6: Buscando archivos grandes en carpetas temporales..." "Gray"
+    
+    $tempPaths = @($env:TEMP, "$env:LOCALAPPDATA\Temp", "C:\Windows\Temp")
+    foreach ($tempPath in $tempPaths) {
+        if (Test-Path $tempPath) {
+            $largeFiles = Get-ChildItem -Path $tempPath -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Length -gt 10MB -and
+                    $_.Extension -in @(".exe", ".dll", ".zip", ".rar", ".7z") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-7)
+                } | Select-Object -First 20
+            
+            foreach ($file in $largeFiles) {
+                $totalScanned++
+                $sizeMB = [Math]::Round($file.Length / 1MB, 2)
+                
+                Add-Detection "Archivo - Archivo Grande en TEMP" `
+                    "$($file.Name) ($sizeMB MB)" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    65
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "Large Temp File"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    SizeMB = $sizeMB
+                    ThreatLevel = 65
+                    Reason = "Archivo grande en carpeta temporal"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 7: ARCHIVOS .JAR SOSPECHOSOS (AutoClickers) =====
+    Write-Log "Fase 7: Analizando archivos JAR..." "Gray"
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            $jarFiles = Get-ChildItem -Path $path -Filter "*.jar" -Recurse -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-60) } |
+                Select-Object -First 30
+            
+            foreach ($jar in $jarFiles) {
+                $totalScanned++
+                $signatures = Test-CheatSignature $jar.Name
+                
+                # Nombres sospechosos de AutoClickers
+                if ($jar.Name -match "(auto|click|macro|ghost|jna|jnative)" -or $signatures.Count -gt 0) {
+                    Add-Detection "Archivo - JAR Sospechoso (Posible AutoClicker)" `
+                        $jar.Name `
+                        "HIGH" `
+                        $jar.FullName `
+                        80
+                    
+                    $fileFindings += [PSCustomObject]@{
+                        Category = "Suspicious JAR"
+                        FileName = $jar.Name
+                        Path = $jar.FullName
+                        Size = $jar.Length
+                        ThreatLevel = 80
+                        Reason = "JAR con nombre sospechoso de AutoClicker"
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 8: ARCHIVOS EN CARPETAS DE RECICLAJE =====
+    Write-Log "Fase 8: Escaneando papelera de reciclaje..." "Gray"
+    
+    $recycleBin = "C:\`$Recycle.Bin"
+    if (Test-Path $recycleBin) {
+        $deletedFiles = Get-ChildItem -Path $recycleBin -Recurse -Force -ErrorAction SilentlyContinue |
+            Where-Object { 
+                -not $_.PSIsContainer -and
+                $_.Extension -in @(".exe", ".dll", ".jar") -and
+                $_.LastWriteTime -gt (Get-Date).AddDays(-7)
+            } | Select-Object -First 30
+        
+        foreach ($file in $deletedFiles) {
+            $totalScanned++
+            $signatures = Test-CheatSignature $file.Name
+            
+            if ($signatures.Count -gt 0) {
+                Add-Detection "Archivo - Cheat en Papelera" `
+                    "$($file.Name) eliminado recientemente" `
+                    "HIGH" `
+                    $file.FullName `
+                    75
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "Deleted File"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    DeletedDate = $file.LastWriteTime
+                    ThreatLevel = 75
+                    Reason = "Archivo sospechoso en papelera"
+                }
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $fileFindings | Export-Csv "$outputDir\20_Advanced_File_Detection.csv" -NoTypeInformation
+    Write-Log "Detección de Archivos: $totalScanned archivos escaneados, $($fileFindings.Count) sospechosos" "Green"
+    
+    # Estadísticas por categoría
+    if ($fileFindings.Count -gt 0) {
+        Write-Log "`nEstadísticas por categoría:" "Cyan"
+        $fileFindings | Group-Object Category | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+    }
+}
+
+# ============================================
+# MÓDULO 22: ANÁLISIS FORENSE DE EXTENSIONES FALSAS
+# ============================================
+
+function Invoke-FileForensicsAnalysis {
+    Update-Progress "Analizando extensiones falsas y archivos manipulados..."
+    Write-Log "`n=== MÓDULO 22: ANÁLISIS FORENSE DE ARCHIVOS ===" "Cyan"
+    
+    $forensicFindings = @()
+    $totalAnalyzed = 0
+    
+    Write-Log "Iniciando análisis forense profundo..." "Yellow"
+    
+    # Carpetas a analizar
+    $scanPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:USERPROFILE\Pictures",  # Común para ocultar .exe como .png
+        "$env:USERPROFILE\Videos",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA"
+    )
+    
+    # ===== FASE 1: DETECCIÓN DE EXTENSIONES FALSAS =====
+    Write-Log "Fase 1: Detectando extensiones falsas (magic bytes)..." "Gray"
+    
+    # Extensiones a verificar (sospechosas de ser falsas)
+    $extensionsToCheck = @(".png", ".jpg", ".gif", ".txt", ".pdf", ".doc", ".mp3", ".mp4", ".avi")
+    
+    foreach ($path in $scanPaths) {
+        if (Test-Path $path) {
+            foreach ($ext in $extensionsToCheck) {
+                $files = Get-ChildItem -Path $path -Filter "*$ext" -Recurse -File -ErrorAction SilentlyContinue -Force |
+                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-60) -and $_.Length -gt 10KB } |
+                    Select-Object -First 50
+                
+                foreach ($file in $files) {
+                    $totalAnalyzed++
+                    
+                    # Analizar magic bytes
+                    $mismatch = Test-FileExtensionMismatch -Path $file.FullName -Extension $file.Extension
+                    
+                    if ($mismatch) {
+                        $severity = if ($mismatch.ThreatLevel -ge 90) { "CRITICAL" } 
+                                   elseif ($mismatch.ThreatLevel -ge 75) { "HIGH" }
+                                   else { "MEDIUM" }
+                        
+                        Add-Detection "Forense - Extensión Falsa Detectada" `
+                            "$($file.Name) - Real: $($mismatch.RealType), Falso: $($mismatch.FakeExtension)" `
+                            $severity `
+                            $file.FullName `
+                            $mismatch.ThreatLevel
+                        
+                        $forensicFindings += [PSCustomObject]@{
+                            Category = "Fake Extension"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            FakeExtension = $mismatch.FakeExtension
+                            RealType = $mismatch.RealType
+                            MagicBytes = $mismatch.ActualMagic
+                            Size = $file.Length
+                            Modified = $file.LastWriteTime
+                            ThreatLevel = $mismatch.ThreatLevel
+                            Hash = Get-FileHash-Safe $file.FullName
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 2: ARCHIVOS VACÍOS O CASI VACÍOS =====
+    Write-Log "Fase 2: Detectando archivos vacíos o con contenido eliminado..." "Gray"
+    
+    foreach ($path in $scanPaths) {
+        if (Test-Path $path) {
+            $emptyFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Length -eq 0 -and
+                    $_.Extension -in @(".exe", ".dll", ".jar", ".zip", ".rar") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 30
+            
+            foreach ($file in $emptyFiles) {
+                $totalAnalyzed++
+                
+                Add-Detection "Forense - Archivo Vaciado" `
+                    "$($file.Name) (0 bytes) - Contenido eliminado" `
+                    "HIGH" `
+                    $file.FullName `
+                    85
+                
+                $forensicFindings += [PSCustomObject]@{
+                    Category = "Empty File"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = 0
+                    Modified = $file.LastWriteTime
+                    ThreatLevel = 85
+                    Reason = "Archivo ejecutable/comprimido vacío (contenido eliminado)"
+                }
+            }
+            
+            # Archivos sospechosamente pequeños (menos de 1KB)
+            $tinyFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Length -gt 0 -and $_.Length -lt 1024 -and
+                    $_.Extension -in @(".exe", ".dll") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 20
+            
+            foreach ($file in $tinyFiles) {
+                $totalAnalyzed++
+                
+                Add-Detection "Forense - Archivo Sospechosamente Pequeño" `
+                    "$($file.Name) ($($file.Length) bytes) - Posible stub o vaciado parcial" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    70
+                
+                $forensicFindings += [PSCustomObject]@{
+                    Category = "Tiny Executable"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    ThreatLevel = 70
+                    Reason = "Ejecutable sospechosamente pequeño"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 3: ARCHIVOS RENOMBRADOS CON PATRONES SOSPECHOSOS =====
+    Write-Log "Fase 3: Detectando patrones de renombrado sospechoso..." "Gray"
+    
+    foreach ($path in $scanPaths) {
+        if (Test-Path $path) {
+            # Buscar archivos con nombres genéricos sospechosos
+            $suspiciousNames = @("file", "document", "image", "photo", "video", "temp", "new", "untitled", "backup")
+            
+            foreach ($susName in $suspiciousNames) {
+                $files = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                    Where-Object { 
+                        $_.Name -match "^$susName\d*\." -and
+                        $_.Extension -in @(".exe", ".dll", ".jar", ".bat") -and
+                        $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                    } | Select-Object -First 20
+                
+                foreach ($file in $files) {
+                    $totalAnalyzed++
+                    
+                    Add-Detection "Forense - Nombre Genérico Sospechoso" `
+                        "$($file.Name) - Posible renombrado para ocultar" `
+                        "MEDIUM" `
+                        $file.FullName `
+                        65
+                    
+                    $forensicFindings += [PSCustomObject]@{
+                        Category = "Suspicious Rename"
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        ThreatLevel = 65
+                        Reason = "Nombre genérico en archivo ejecutable"
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 4: ARCHIVOS CON METADATA CORRUPTA =====
+    Write-Log "Fase 4: Verificando metadata de archivos..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $files = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Extension -in @(".exe", ".dll") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 50
+            
+            foreach ($file in $files) {
+                $totalAnalyzed++
+                
+                try {
+                    $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
+                    
+                    # Detectar ejecutables sin información de versión
+                    if (-not $versionInfo.CompanyName -and -not $versionInfo.FileDescription -and $file.Length -gt 100KB) {
+                        Add-Detection "Forense - Ejecutable Sin Metadata" `
+                            "$($file.Name) - Sin información de compañía/descripción" `
+                            "MEDIUM" `
+                            $file.FullName `
+                            65
+                        
+                        $forensicFindings += [PSCustomObject]@{
+                            Category = "No Metadata"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            ThreatLevel = 65
+                            Reason = "Ejecutable sin metadata de versión"
+                        }
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    # ===== FASE 5: ARCHIVOS CON ICONOS FALSOS =====
+    Write-Log "Fase 5: Detectando ejecutables con iconos falsos..." "Gray"
+    
+    # Buscar .exe con iconos de documentos/imágenes (técnica común de malware)
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents")) {
+        if (Test-Path $path) {
+            $exeFiles = Get-ChildItem -Path $path -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                Select-Object -First 30
+            
+            foreach ($exe in $exeFiles) {
+                $totalAnalyzed++
+                
+                # Si el nombre sugiere que es un documento pero es .exe
+                if ($exe.Name -match "\.(pdf|doc|txt|jpg|png)\.exe$") {
+                    Add-Detection "Forense - EXE Disfrazado de Documento" `
+                        "$($exe.Name) - Extensión engañosa" `
+                        "CRITICAL" `
+                        $exe.FullName `
+                        95
+                    
+                    $forensicFindings += [PSCustomObject]@{
+                        Category = "Fake Document"
+                        FileName = $exe.Name
+                        Path = $exe.FullName
+                        ThreatLevel = 95
+                        Reason = "Ejecutable disfrazado con extensión de documento"
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 6: ARCHIVOS CON ENTROPÍA SOSPECHOSA =====
+    Write-Log "Fase 6: Analizando entropía de archivos..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $files = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Extension -in @(".exe", ".dll", ".jar") -and
+                    $_.Length -gt 50KB -and $_.Length -lt 500KB -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 30
+            
+            foreach ($file in $files) {
+                $totalAnalyzed++
+                
+                try {
+                    # Leer primeros 1KB para análisis rápido
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName) | Select-Object -First 1024
+                    
+                    # Calcular entropía simple
+                    $uniqueBytes = ($bytes | Group-Object | Measure-Object).Count
+                    $entropy = $uniqueBytes / 256.0
+                    
+                    # Entropía muy baja o muy alta es sospechosa
+                    if ($entropy -lt 0.3 -or $entropy -gt 0.95) {
+                        $reason = if ($entropy -lt 0.3) { "muy baja (posible padding)" } else { "muy alta (posible compresión/cifrado)" }
+                        
+                        Add-Detection "Forense - Entropía Anómala" `
+                            "$($file.Name) - Entropía $reason" `
+                            "MEDIUM" `
+                            $file.FullName `
+                            60
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $forensicFindings | Export-Csv "$outputDir\21_File_Forensics.csv" -NoTypeInformation
+    Write-Log "Análisis Forense: $totalAnalyzed archivos analizados, $($forensicFindings.Count) anomalías detectadas" "Green"
+    
+    # Estadísticas
+    if ($forensicFindings.Count -gt 0) {
+        Write-Log "`nAnomalías por categoría:" "Cyan"
+        $forensicFindings | Group-Object Category | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+    }
+}
+
+# ============================================
+# MÓDULO 20: ANÁLISIS HEURÍSTICO AVANZADO
+# ============================================================================
+
+function Invoke-AdvancedFileDetection {
+    Update-Progress "Escaneando archivos en todo el sistema..."
+    Write-Log "`n=== MÓDULO 21: DETECCIÓN AVANZADA DE ARCHIVOS ===" "Cyan"
+    
+    $fileFindings = @()
+    $totalScanned = 0
+    
+    # Carpetas críticas para escanear
+    $criticalPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA",
+        "$env:TEMP",
+        "C:\Users\Public",
+        "C:\ProgramData"
+    )
+    
+    Write-Log "Iniciando escaneo profundo de archivos..." "Yellow"
+    
+    # ===== FASE 1: BUSCAR ARCHIVOS CONOCIDOS =====
+    Write-Log "Fase 1: Buscando archivos conocidos de cheats..." "Gray"
+    
+    foreach ($category in $knownCheatFiles.Keys) {
+        foreach ($cheatFile in $knownCheatFiles[$category]) {
+            $fileName = $cheatFile.Name
+            
+            # Buscar en carpetas críticas
+            foreach ($path in $criticalPaths) {
+                if (Test-Path $path) {
+                    $found = Get-ChildItem -Path $path -Filter $fileName -Recurse -ErrorAction SilentlyContinue -Force |
+                        Select-Object -First 5
+                    
+                    foreach ($file in $found) {
+                        $totalScanned++
+                        $hash = Get-FileHash-Safe $file.FullName
+                        
+                        Add-Detection "Archivo - Cheat Conocido Detectado" `
+                            "$fileName encontrado en $($file.DirectoryName)" `
+                            "CRITICAL" `
+                            $file.FullName `
+                            $cheatFile.ThreatLevel
+                        
+                        $fileFindings += [PSCustomObject]@{
+                            Category = $category
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Size = $file.Length
+                            Created = $file.CreationTime
+                            Modified = $file.LastWriteTime
+                            Accessed = $file.LastAccessTime
+                            Hash = $hash
+                            ThreatLevel = $cheatFile.ThreatLevel
+                            Reason = "Archivo conocido de cheat"
+                            Hidden = $file.Attributes -match "Hidden"
+                        }
+                    }
+                }
+            }
+            
+            # Buscar en disco C:\ (solo raíz y Program Files)
+            $systemPaths = @("C:\", "C:\Program Files", "C:\Program Files (x86)")
+            foreach ($sysPath in $systemPaths) {
+                $found = Get-ChildItem -Path $sysPath -Filter $fileName -ErrorAction SilentlyContinue -Force |
+                    Where-Object { -not $_.PSIsContainer } |
+                    Select-Object -First 2
+                
+                foreach ($file in $found) {
+                    $totalScanned++
+                    Add-Detection "Archivo - Cheat en Ubicación del Sistema" `
+                        "$fileName en $($file.DirectoryName)" `
+                        "CRITICAL" `
+                        $file.FullName `
+                        ($cheatFile.ThreatLevel + 5)
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 2: ARCHIVOS SOSPECHOSOS POR EXTENSIÓN =====
+    Write-Log "Fase 2: Analizando archivos sospechosos por extensión..." "Gray"
+    
+    $suspiciousExtensions = @("*.dll", "*.exe", "*.jar", "*.bat", "*.vbs", "*.ps1", "*.scr")
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            foreach ($ext in $suspiciousExtensions) {
+                $files = Get-ChildItem -Path $path -Filter $ext -Recurse -ErrorAction SilentlyContinue -Force |
+                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                    Select-Object -First 100
+                
+                foreach ($file in $files) {
+                    $totalScanned++
+                    $signatures = Test-CheatSignature $file.Name
+                    
+                    if ($signatures.Count -gt 0) {
+                        $hash = Get-FileHash-Safe $file.FullName
+                        
+                        Add-Detection "Archivo - Nombre Sospechoso" `
+                            "$($file.Name) en $($file.DirectoryName)" `
+                            "HIGH" `
+                            $file.FullName `
+                            80
+                        
+                        $fileFindings += [PSCustomObject]@{
+                            Category = "Suspicious Name"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Size = $file.Length
+                            Created = $file.CreationTime
+                            Modified = $file.LastWriteTime
+                            Hash = $hash
+                            ThreatLevel = 80
+                            Reason = "Nombre contiene palabras clave sospechosas"
+                            Signatures = ($signatures.Signature -join ", ")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 3: ARCHIVOS OCULTOS =====
+    Write-Log "Fase 3: Detectando archivos ocultos..." "Gray"
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            $hiddenFiles = Get-ChildItem -Path $path -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Attributes -match "Hidden" -and 
+                    -not $_.PSIsContainer -and
+                    $_.Extension -in @(".exe", ".dll", ".jar", ".bat", ".vbs")
+                } | Select-Object -First 50
+            
+            foreach ($file in $hiddenFiles) {
+                $totalScanned++
+                $signatures = Test-CheatSignature $file.Name
+                
+                if ($signatures.Count -gt 0 -or $file.Length -gt 1MB) {
+                    Add-Detection "Archivo - Archivo Oculto Sospechoso" `
+                        "$($file.Name) (oculto)" `
+                        "HIGH" `
+                        $file.FullName `
+                        75
+                    
+                    $fileFindings += [PSCustomObject]@{
+                        Category = "Hidden File"
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        Size = $file.Length
+                        Modified = $file.LastWriteTime
+                        ThreatLevel = 75
+                        Reason = "Archivo ejecutable oculto"
+                        Hidden = $true
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 4: ARCHIVOS SIN EXTENSIÓN O DOBLE EXTENSIÓN =====
+    Write-Log "Fase 4: Buscando archivos sin extensión o con doble extensión..." "Gray"
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            # Archivos sin extensión
+            $noExtFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    -not $_.Extension -and 
+                    $_.Length -gt 100KB -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 20
+            
+            foreach ($file in $noExtFiles) {
+                $totalScanned++
+                Add-Detection "Archivo - Sin Extensión" `
+                    "$($file.Name) sin extensión" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    60
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "No Extension"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    ThreatLevel = 60
+                    Reason = "Archivo sin extensión"
+                }
+            }
+            
+            # Doble extensión (ej: archivo.pdf.exe)
+            $doubleExtFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Name -match "\.[a-z]{3,4}\.(exe|dll|bat|vbs|scr|jar)$" -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 20
+            
+            foreach ($file in $doubleExtFiles) {
+                $totalScanned++
+                Add-Detection "Archivo - Doble Extensión Sospechosa" `
+                    "$($file.Name) con doble extensión" `
+                    "HIGH" `
+                    $file.FullName `
+                    85
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "Double Extension"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    ThreatLevel = 85
+                    Reason = "Doble extensión (posible malware)"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 5: ARCHIVOS CON TIMESTAMPS MANIPULADOS =====
+    Write-Log "Fase 5: Detectando manipulación de timestamps..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $manipulatedFiles = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.CreationTime -gt $_.LastWriteTime -and
+                    $_.Extension -in @(".exe", ".dll", ".jar") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-14)
+                } | Select-Object -First 30
+            
+            foreach ($file in $manipulatedFiles) {
+                $totalScanned++
+                $timeDiff = ($file.CreationTime - $file.LastWriteTime).TotalHours
+                
+                if ($timeDiff -gt 1) {
+                    Add-Detection "Archivo - Timestamp Manipulado" `
+                        "$($file.Name) - Creado después de modificado ($([Math]::Round($timeDiff, 1))h diferencia)" `
+                        "HIGH" `
+                        $file.FullName `
+                        80
+                    
+                    $fileFindings += [PSCustomObject]@{
+                        Category = "Manipulated Timestamp"
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        Created = $file.CreationTime
+                        Modified = $file.LastWriteTime
+                        TimeDifference = "$([Math]::Round($timeDiff, 1)) horas"
+                        ThreatLevel = 80
+                        Reason = "Timestamp manipulado con SetFileDate o similar"
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 6: ARCHIVOS GRANDES EN TEMP =====
+    Write-Log "Fase 6: Buscando archivos grandes en carpetas temporales..." "Gray"
+    
+    $tempPaths = @($env:TEMP, "$env:LOCALAPPDATA\Temp", "C:\Windows\Temp")
+    foreach ($tempPath in $tempPaths) {
+        if (Test-Path $tempPath) {
+            $largeFiles = Get-ChildItem -Path $tempPath -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.Length -gt 10MB -and
+                    $_.Extension -in @(".exe", ".dll", ".zip", ".rar", ".7z") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-7)
+                } | Select-Object -First 20
+            
+            foreach ($file in $largeFiles) {
+                $totalScanned++
+                $sizeMB = [Math]::Round($file.Length / 1MB, 2)
+                
+                Add-Detection "Archivo - Archivo Grande en TEMP" `
+                    "$($file.Name) ($sizeMB MB)" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    65
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "Large Temp File"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    SizeMB = $sizeMB
+                    ThreatLevel = 65
+                    Reason = "Archivo grande en carpeta temporal"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 7: ARCHIVOS .JAR SOSPECHOSOS (AutoClickers) =====
+    Write-Log "Fase 7: Analizando archivos JAR..." "Gray"
+    
+    foreach ($path in $criticalPaths) {
+        if (Test-Path $path) {
+            $jarFiles = Get-ChildItem -Path $path -Filter "*.jar" -Recurse -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-60) } |
+                Select-Object -First 30
+            
+            foreach ($jar in $jarFiles) {
+                $totalScanned++
+                $signatures = Test-CheatSignature $jar.Name
+                
+                # Nombres sospechosos de AutoClickers
+                if ($jar.Name -match "(auto|click|macro|ghost|jna|jnative)" -or $signatures.Count -gt 0) {
+                    Add-Detection "Archivo - JAR Sospechoso (Posible AutoClicker)" `
+                        $jar.Name `
+                        "HIGH" `
+                        $jar.FullName `
+                        80
+                    
+                    $fileFindings += [PSCustomObject]@{
+                        Category = "Suspicious JAR"
+                        FileName = $jar.Name
+                        Path = $jar.FullName
+                        Size = $jar.Length
+                        ThreatLevel = 80
+                        Reason = "JAR con nombre sospechoso de AutoClicker"
+                    }
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 8: ARCHIVOS EN CARPETAS DE RECICLAJE =====
+    Write-Log "Fase 8: Escaneando papelera de reciclaje..." "Gray"
+    
+    $recycleBin = "C:\`$Recycle.Bin"
+    if (Test-Path $recycleBin) {
+        $deletedFiles = Get-ChildItem -Path $recycleBin -Recurse -Force -ErrorAction SilentlyContinue |
+            Where-Object { 
+                -not $_.PSIsContainer -and
+                $_.Extension -in @(".exe", ".dll", ".jar") -and
+                $_.LastWriteTime -gt (Get-Date).AddDays(-7)
+            } | Select-Object -First 30
+        
+        foreach ($file in $deletedFiles) {
+            $totalScanned++
+            $signatures = Test-CheatSignature $file.Name
+            
+            if ($signatures.Count -gt 0) {
+                Add-Detection "Archivo - Cheat en Papelera" `
+                    "$($file.Name) eliminado recientemente" `
+                    "HIGH" `
+                    $file.FullName `
+                    75
+                
+                $fileFindings += [PSCustomObject]@{
+                    Category = "Deleted File"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    DeletedDate = $file.LastWriteTime
+                    ThreatLevel = 75
+                    Reason = "Archivo sospechoso en papelera"
+                }
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $fileFindings | Export-Csv "$outputDir\20_Advanced_File_Detection.csv" -NoTypeInformation
+    Write-Log "Detección de Archivos: $totalScanned archivos escaneados, $($fileFindings.Count) sospechosos" "Green"
+    
+    # Estadísticas por categoría
+    if ($fileFindings.Count -gt 0) {
+        Write-Log "`nEstadísticas por categoría:" "Cyan"
+        $fileFindings | Group-Object Category | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+    }
+}
+
+# ============================================
 # MÓDULO 20: ANÁLISIS HEURÍSTICO AVANZADO
 # ============================================
 
@@ -2249,6 +3437,8 @@ function New-HTMLReport {
                 <div class="file-item">📄 17_Performance.csv - Análisis de rendimiento</div>
                 <div class="file-item">📄 18_Events.csv - Eventos del sistema</div>
                 <div class="file-item">📄 19_Heuristic.csv - Análisis heurístico</div>
+                <div class="file-item">📄 20_Advanced_File_Detection.csv - Detección avanzada de archivos</div>
+                <div class="file-item">📄 21_File_Forensics.csv - Análisis forense (extensiones falsas, archivos vaciados)</div>
                 <div class="file-item">📄 NEXUS_MASTER_LOG.txt - Log completo del escaneo</div>
             </div>
         </div>
@@ -2304,6 +3494,8 @@ function Start-NexusAntiCheat {
     Invoke-DriverAnalysis
     Invoke-PerformanceAnalysis
     Invoke-EventLogAnalysis
+    Invoke-AdvancedFileDetection
+    Invoke-FileForensicsAnalysis
     
     # Análisis heurístico final
     $heuristicScore = Invoke-HeuristicAnalysis
