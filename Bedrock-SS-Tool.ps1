@@ -41,20 +41,22 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $logFile = "$outputDir\NEXUS_MASTER_LOG.txt"
 $detections = @()
 $startTime = Get-Date
-$totalChecks = 30
+$totalChecks = 35
 $currentCheck = 0
 
 # Base de datos de firmas (expandida)
 $cheatSignatures = @{
     Clients = @(
         "horion", "onix", "zephyr", "packet", "crystal", "ambrosial", "lakeside",
-        "nitr0", "koid", "dream", "toolbox", "element", "rise", "fdp", "liquid",
-        "azura", "flux", "vertex", "phantom", "ghost", "spectre", "venom", "toxic"
+        "nitr0", "nitro", "koid", "dream", "toolbox", "element", "rise", "fdp", "liquid",
+        "azura", "flux", "vertex", "phantom", "ghost", "spectre", "venom", "toxic",
+        "filess", "entropy", "vape", "astolfo", "sigma", "wurst", "meteor"
     )
     
     Injectors = @(
         "dll_inject", "process_inject", "xenos", "extreme_injector", "manual_map",
-        "loadlibrary", "creepermod", "apollo", "mineshafter", "clientloader"
+        "loadlibrary", "creepermod", "apollo", "mineshafter", "clientloader",
+        "injector", "loader", "bootstrap"
     )
     
     Modifications = @(
@@ -62,7 +64,8 @@ $cheatSignatures = @{
         "scaffold", "freecam", "esp", "tracers", "nametags", "cavefinder",
         "nuker", "fastbreak", "autoarmor", "autoclicker", "aimbot", "triggerbot",
         "antifall", "nofall", "timer", "fastbow", "criticals", "step", "jesus",
-        "derp", "blink", "phase", "noslowdown", "antiblind", "fullbright"
+        "derp", "blink", "phase", "noslowdown", "antiblind", "fullbright",
+        "autoclick", "leftclick", "rightclick", "doubleclick", "clickassist"
     )
     
     Tools = @(
@@ -3107,6 +3110,1908 @@ function Invoke-MemoryAnalysis {
 }
 
 # ============================================
+# MÓDULO 33: DETECCIÓN DE VENTANAS INVISIBLES
+# ============================================
+
+function Invoke-InvisibleWindowDetection {
+    Update-Progress "Detectando ventanas invisibles (solo visibles localmente)..."
+    Write-Log "`n=== MÓDULO 33: VENTANAS INVISIBLES ===" "Cyan"
+    
+    $invisibleFindings = @()
+    $totalAnalyzed = 0
+    
+    Write-Log "Buscando aplicaciones ocultas a screenshare (AnyDesk/TeamViewer)..." "Yellow"
+    
+    # Cargar API de Windows para enumerar ventanas
+    Add-Type @"
+        using System;
+        using System.Runtime.InteropServices;
+        using System.Text;
+        
+        public class WindowAPI {
+            [DllImport("user32.dll")]
+            public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+            
+            [DllImport("user32.dll")]
+            public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+            
+            [DllImport("user32.dll")]
+            public static extern bool IsWindowVisible(IntPtr hWnd);
+            
+            [DllImport("user32.dll")]
+            public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+            
+            [DllImport("user32.dll")]
+            public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+            
+            [DllImport("user32.dll")]
+            public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+            
+            [DllImport("dwmapi.dll")]
+            public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out bool pvAttribute, int cbAttribute);
+            
+            public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+            
+            public const int GWL_EXSTYLE = -20;
+            public const int WS_EX_TOOLWINDOW = 0x00000080;
+            public const int WS_EX_LAYERED = 0x00080000;
+            public const int WS_EX_TRANSPARENT = 0x00000020;
+            public const int DWMWA_CLOAKED = 14;
+            
+            [StructLayout(LayoutKind.Sequential)]
+            public struct RECT {
+                public int Left;
+                public int Top;
+                public int Right;
+                public int Bottom;
+            }
+        }
+"@
+    
+    # Lista para almacenar ventanas
+    $windows = New-Object System.Collections.ArrayList
+    
+    # Callback para enumerar ventanas
+    $enumCallback = {
+        param($hWnd, $lParam)
+        
+        try {
+            $title = New-Object System.Text.StringBuilder 256
+            [WindowAPI]::GetWindowText($hWnd, $title, 256) | Out-Null
+            $titleStr = $title.ToString()
+            
+            if ($titleStr.Length -gt 0) {
+                # Obtener PID
+                $processId = 0
+                [WindowAPI]::GetWindowThreadProcessId($hWnd, [ref]$processId) | Out-Null
+                
+                # Verificar si es visible
+                $isVisible = [WindowAPI]::IsWindowVisible($hWnd)
+                
+                # Obtener estilos extendidos
+                $exStyle = [WindowAPI]::GetWindowLong($hWnd, [WindowAPI]::GWL_EXSTYLE)
+                
+                # Verificar si está cloaked (oculto por DWM)
+                $isCloaked = $false
+                try {
+                    [WindowAPI]::DwmGetWindowAttribute($hWnd, [WindowAPI]::DWMWA_CLOAKED, [ref]$isCloaked, [System.Runtime.InteropServices.Marshal]::SizeOf([bool])) | Out-Null
+                } catch {}
+                
+                # Obtener dimensiones
+                $rect = New-Object WindowAPI+RECT
+                [WindowAPI]::GetWindowRect($hWnd, [ref]$rect) | Out-Null
+                
+                $width = $rect.Right - $rect.Left
+                $height = $rect.Bottom - $rect.Top
+                
+                $windowInfo = [PSCustomObject]@{
+                    Handle = $hWnd.ToInt64()
+                    Title = $titleStr
+                    ProcessId = $processId
+                    IsVisible = $isVisible
+                    IsCloaked = $isCloaked
+                    ExStyle = $exStyle
+                    Width = $width
+                    Height = $height
+                    IsLayered = ($exStyle -band [WindowAPI]::WS_EX_LAYERED) -ne 0
+                    IsTransparent = ($exStyle -band [WindowAPI]::WS_EX_TRANSPARENT) -ne 0
+                    IsToolWindow = ($exStyle -band [WindowAPI]::WS_EX_TOOLWINDOW) -ne 0
+                }
+                
+                [void]$windows.Add($windowInfo)
+            }
+        } catch {}
+        
+        return $true
+    }
+    
+    # Enumerar todas las ventanas
+    $delegate = [WindowAPI+EnumWindowsProc]$enumCallback
+    [WindowAPI]::EnumWindows($delegate, [IntPtr]::Zero) | Out-Null
+    
+    Write-Log "Encontradas $($windows.Count) ventanas totales" "Gray"
+    
+    # === ANÁLISIS DE VENTANAS SOSPECHOSAS ===
+    foreach ($win in $windows) {
+        $totalAnalyzed++
+        
+        try {
+            $proc = Get-Process -Id $win.ProcessId -ErrorAction SilentlyContinue
+            if (-not $proc) { continue }
+            
+            $isSuspicious = $false
+            $suspicionReasons = @()
+            
+            # === TÉCNICA 1: VENTANA CLOAKED ===
+            if ($win.IsCloaked) {
+                $isSuspicious = $true
+                $suspicionReasons += "Ventana Cloaked (oculta por DWM)"
+                
+                Add-Detection "Ventana Invisible - Cloaked" `
+                    "$($proc.Name) - '$($win.Title)' está oculta (DWM Cloaked)" `
+                    "CRITICAL" `
+                    $proc.Path `
+                    95
+            }
+            
+            # === TÉCNICA 2: VENTANA LAYERED + TRANSPARENT ===
+            if ($win.IsLayered -and $win.IsTransparent) {
+                $isSuspicious = $true
+                $suspicionReasons += "Ventana transparente (WS_EX_LAYERED + WS_EX_TRANSPARENT)"
+                
+                Add-Detection "Ventana Invisible - Transparente" `
+                    "$($proc.Name) - '$($win.Title)' es transparente" `
+                    "HIGH" `
+                    $proc.Path `
+                    85
+            }
+            
+            # === TÉCNICA 3: VENTANA FUERA DE PANTALLA ===
+            if ($win.Width -gt 0 -and $win.Height -gt 0) {
+                if ($win.Width -eq 1 -and $win.Height -eq 1) {
+                    $isSuspicious = $true
+                    $suspicionReasons += "Ventana 1x1 pixel (prácticamente invisible)"
+                    
+                    Add-Detection "Ventana Invisible - 1x1 Pixel" `
+                        "$($proc.Name) - '$($win.Title)' es 1x1 pixel" `
+                        "HIGH" `
+                        $proc.Path `
+                        80
+                }
+            }
+            
+            # === TÉCNICA 4: TÍTULO SOSPECHOSO ===
+            $signatures = Test-CheatSignature $win.Title
+            if ($signatures.Count -gt 0) {
+                $isSuspicious = $true
+                $suspicionReasons += "Título contiene palabras clave: $($signatures.Signature -join ', ')"
+                
+                Add-Detection "Ventana Invisible - Título Sospechoso" `
+                    "$($proc.Name) - Ventana: '$($win.Title)'" `
+                    "CRITICAL" `
+                    $proc.Path `
+                    90
+            }
+            
+            # === TÉCNICA 5: TOOL WINDOW (común en overlays) ===
+            if ($win.IsToolWindow -and -not $win.IsVisible) {
+                $isSuspicious = $true
+                $suspicionReasons += "Tool Window invisible (overlay común)"
+            }
+            
+            # Registrar hallazgo
+            if ($isSuspicious) {
+                $invisibleFindings += [PSCustomObject]@{
+                    ProcessName = $proc.Name
+                    PID = $win.ProcessId
+                    WindowTitle = $win.Title
+                    Path = $proc.Path
+                    IsVisible = $win.IsVisible
+                    IsCloaked = $win.IsCloaked
+                    IsLayered = $win.IsLayered
+                    IsTransparent = $win.IsTransparent
+                    Width = $win.Width
+                    Height = $win.Height
+                    Reasons = ($suspicionReasons -join " | ")
+                    ThreatLevel = 85
+                }
+            }
+            
+        } catch {}
+    }
+    
+    # === DETECCIÓN DE SOFTWARE ANTI-SCREENSHARE ===
+    Write-Log "Detectando software anti-screenshare activo..." "Gray"
+    
+    $antiScreenShareTools = @(
+        "NoobNoObserver", "ObsKiller", "ScreenShareBypass", "AntiOBS",
+        "TeamViewerBlock", "AnyDeskBlock", "RemoteBlock"
+    )
+    
+    foreach ($tool in $antiScreenShareTools) {
+        $procs = Get-Process -Name "*$tool*" -ErrorAction SilentlyContinue
+        foreach ($proc in $procs) {
+            Add-Detection "Anti-ScreenShare - Software Activo" `
+                "$($proc.Name) está bloqueando capturas de pantalla" `
+                "CRITICAL" `
+                $proc.Path `
+                100
+        }
+    }
+    
+    # Exportar resultados
+    $invisibleFindings | Export-Csv "$outputDir\32_Invisible_Windows.csv" -NoTypeInformation
+    Write-Log "Ventanas Invisibles: $totalAnalyzed ventanas analizadas, $($invisibleFindings.Count) sospechosas" "Green"
+    
+    if ($invisibleFindings.Count -gt 0) {
+        Write-Log "`n🚨 ALERTA: Detectadas ventanas invisibles!" "Red"
+        foreach ($win in $invisibleFindings) {
+            Write-Log "  - $($win.ProcessName): '$($win.WindowTitle)'" "Red"
+        }
+    }
+}
+
+# ============================================
+# MÓDULO 35: ANÁLISIS PROFUNDO DE ARCHIVOS DESCARGADOS
+# ============================================
+
+function Invoke-DeepDownloadedFileAnalysis {
+    Update-Progress "Analizando contenido interno de archivos descargados..."
+    Write-Log "`n=== MÓDULO 35: ANÁLISIS PROFUNDO DE DESCARGAS ===" "Cyan"
+    
+    $deepAnalysisFindings = @()
+    $totalAnalyzed = 0
+    $totalScanned = 0
+    
+    Write-Log "Escaneando contenido interno de archivos descargados..." "Yellow"
+    
+    # Obtener todos los archivos con Zone.Identifier (descargados)
+    $downloadLocations = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents"
+    )
+    
+    $downloadedFiles = @()
+    
+    foreach ($location in $downloadLocations) {
+        if (Test-Path $location) {
+            $files = Get-ChildItem -Path $location -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-180) -and
+                    $_.Length -gt 1KB -and $_.Length -lt 100MB
+                } | Select-Object -First 300
+            
+            foreach ($file in $files) {
+                # Verificar si tiene Zone.Identifier (fue descargado)
+                try {
+                    $hasZone = Get-Content -Path $file.FullName -Stream "Zone.Identifier" -ErrorAction SilentlyContinue
+                    if ($hasZone) {
+                        $downloadedFiles += $file
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    Write-Log "Encontrados $($downloadedFiles.Count) archivos descargados para analizar en profundidad" "Cyan"
+    
+    # Analizar cada archivo descargado
+    foreach ($file in $downloadedFiles) {
+        $totalScanned++
+        
+        try {
+            # Obtener información de descarga
+            $zoneContent = Get-Content -Path $file.FullName -Stream "Zone.Identifier" -ErrorAction SilentlyContinue
+            $downloadInfo = @{}
+            
+            foreach ($line in $zoneContent) {
+                if ($line -match "^([^=]+)=(.*)$") {
+                    $downloadInfo[$matches[1]] = $matches[2]
+                }
+            }
+            
+            $downloadUrl = if ($downloadInfo["HostUrl"]) { $downloadInfo["HostUrl"] } else { "Desconocida" }
+            $referrerUrl = if ($downloadInfo["ReferrerUrl"]) { $downloadInfo["ReferrerUrl"] } else { "Desconocida" }
+            
+            # Determinar origen
+            $downloadSource = "Desconocido"
+            if ($downloadUrl -like "*discord*") { $downloadSource = "Discord" }
+            elseif ($downloadUrl -like "*drive.google*") { $downloadSource = "Google Drive" }
+            elseif ($downloadUrl -like "*mediafire*") { $downloadSource = "MediaFire" }
+            elseif ($downloadUrl -like "*mega.nz*") { $downloadSource = "Mega" }
+            elseif ($downloadUrl -like "*github*") { $downloadSource = "GitHub" }
+            elseif ($downloadUrl -like "*dropbox*") { $downloadSource = "Dropbox" }
+            elseif ($downloadUrl -like "*pastebin*") { $downloadSource = "Pastebin" }
+            elseif ($downloadUrl -like "*anonfiles*") { $downloadSource = "AnonFiles" }
+            elseif ($downloadUrl -like "*gofile*") { $downloadSource = "GoFile" }
+            
+            # === ANÁLISIS PROFUNDO DEL ARCHIVO ===
+            $analysisResult = @{
+                FileName = $file.Name
+                Path = $file.FullName
+                Size = $file.Length
+                Extension = $file.Extension
+                Downloaded = $file.CreationTime
+                Modified = $file.LastWriteTime
+                DownloadUrl = $downloadUrl
+                ReferrerUrl = $referrerUrl
+                DownloadSource = $downloadSource
+                Hash = Get-FileHash-Safe $file.FullName
+                
+                # Resultados del análisis
+                IsCheat = $false
+                CheatType = "Desconocido"
+                ThreatLevel = 0
+                DetectionReasons = @()
+                Signatures = @()
+                InternalFiles = @()
+                SuspiciousStrings = @()
+                BehaviorScore = 0
+            }
+            
+            # === ANÁLISIS POR EXTENSIÓN ===
+            
+            # --- ARCHIVOS EJECUTABLES (.EXE, .DLL, .SCR) ---
+            if ($file.Extension -in @(".exe", ".dll", ".scr", ".com")) {
+                $totalAnalyzed++
+                
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                    $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                    
+                    # Verificar magic bytes
+                    $magic = Get-FileMagicBytes -Path $file.FullName
+                    if ($magic -notlike "4D5A*") {
+                        $analysisResult.DetectionReasons += "Magic bytes no corresponden a ejecutable"
+                        $analysisResult.ThreatLevel += 20
+                    }
+                    
+                    # Buscar strings de cheats
+                    $cheatStrings = @(
+                        "killaura", "bhop", "fly", "xray", "reach", "velocity", 
+                        "scaffold", "freecam", "esp", "aimbot", "autoclicker",
+                        "jnativehook", "mousePress", "mouseRelease", "robot.delay",
+                        "horion", "onix", "packet", "crystal", "zephyr", "filess", "nitro"
+                    )
+                    
+                    foreach ($str in $cheatStrings) {
+                        if ($content -match $str) {
+                            $analysisResult.SuspiciousStrings += $str
+                            $analysisResult.ThreatLevel += 10
+                        }
+                    }
+                    
+                    # APIs de inyección
+                    $injectionAPIs = @(
+                        "VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread",
+                        "LoadLibrary", "GetProcAddress", "SetWindowsHookEx"
+                    )
+                    
+                    foreach ($api in $injectionAPIs) {
+                        if ($content -match $api) {
+                            $analysisResult.DetectionReasons += "API de inyección: $api"
+                            $analysisResult.ThreatLevel += 15
+                        }
+                    }
+                    
+                    # Anti-debug
+                    if ($content -match "IsDebuggerPresent|CheckRemoteDebugger") {
+                        $analysisResult.DetectionReasons += "Técnicas anti-debug detectadas"
+                        $analysisResult.ThreatLevel += 10
+                    }
+                    
+                    # Verificar firma digital
+                    $sig = Get-AuthenticodeSignature $file.FullName -ErrorAction SilentlyContinue
+                    if ($sig -and $sig.Status -ne "Valid") {
+                        $analysisResult.DetectionReasons += "Sin firma digital válida"
+                        $analysisResult.ThreatLevel += 10
+                    }
+                    
+                } catch {
+                    Write-Log "Error analizando ejecutable: $($file.Name)" "Yellow"
+                }
+            }
+            
+            # --- ARCHIVOS JAR (JAVA) ---
+            elseif ($file.Extension -eq ".jar") {
+                $totalAnalyzed++
+                
+                try {
+                    # Verificar que sea ZIP válido
+                    $magic = Get-FileMagicBytes -Path $file.FullName
+                    if ($magic -notlike "504B*") {
+                        $analysisResult.DetectionReasons += "No es un JAR válido (no es ZIP)"
+                        $analysisResult.ThreatLevel += 30
+                    } else {
+                        # Abrir JAR como ZIP
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        $zip = [System.IO.Compression.ZipFile]::OpenRead($file.FullName)
+                        $entries = $zip.Entries
+                        
+                        $hasJNativeHook = $false
+                        $hasNativeLibs = $false
+                        $hasManifest = $false
+                        
+                        foreach ($entry in $entries) {
+                            $entryName = $entry.FullName
+                            $analysisResult.InternalFiles += $entryName
+                            
+                            # Detectar JNativeHook
+                            if ($entryName -match "jnativehook|jna-|jansi") {
+                                $hasJNativeHook = $true
+                                $analysisResult.DetectionReasons += "Contiene: $entryName"
+                                $analysisResult.ThreatLevel += 25
+                            }
+                            
+                            # Librerías nativas (.dll, .so)
+                            if ($entryName -match "\.(dll|so|dylib)$") {
+                                $hasNativeLibs = $true
+                                $analysisResult.DetectionReasons += "Librería nativa: $entryName"
+                                $analysisResult.ThreatLevel += 20
+                            }
+                            
+                            # MANIFEST
+                            if ($entryName -eq "META-INF/MANIFEST.MF") {
+                                $hasManifest = $true
+                            }
+                        }
+                        
+                        if (-not $hasManifest) {
+                            $analysisResult.DetectionReasons += "Sin MANIFEST.MF (JAR corrupto)"
+                            $analysisResult.ThreatLevel += 15
+                        }
+                        
+                        $zip.Dispose()
+                        
+                        # Analizar contenido del JAR
+                        $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                        $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                        
+                        # Strings de AutoClicker
+                        $clickerStrings = @(
+                            "autoclicker", "mousePress", "mouseRelease", "robot.delay",
+                            "cps", "clicking", "leftclick", "rightclick", "minCPS", "maxCPS"
+                        )
+                        
+                        foreach ($str in $clickerStrings) {
+                            if ($content -match $str) {
+                                $analysisResult.SuspiciousStrings += $str
+                                $analysisResult.ThreatLevel += 8
+                            }
+                        }
+                    }
+                } catch {
+                    Write-Log "Error analizando JAR: $($file.Name)" "Yellow"
+                }
+            }
+            
+            # --- ARCHIVOS COMPRIMIDOS (.ZIP, .RAR, .7Z) ---
+            elseif ($file.Extension -in @(".zip", ".rar", ".7z")) {
+                $totalAnalyzed++
+                
+                try {
+                    if ($file.Extension -eq ".zip") {
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        $zip = [System.IO.Compression.ZipFile]::OpenRead($file.FullName)
+                        $entries = $zip.Entries
+                        
+                        $suspiciousCount = 0
+                        
+                        foreach ($entry in $entries) {
+                            $entryName = $entry.FullName
+                            $analysisResult.InternalFiles += $entryName
+                            
+                            # Buscar ejecutables/DLLs dentro
+                            if ($entryName -match "\.(exe|dll|jar|bat|vbs|ps1)$") {
+                                $signatures = Test-CheatSignature $entryName
+                                if ($signatures.Count -gt 0) {
+                                    $analysisResult.DetectionReasons += "Archivo sospechoso dentro: $entryName"
+                                    $analysisResult.ThreatLevel += 20
+                                    $suspiciousCount++
+                                }
+                            }
+                        }
+                        
+                        $zip.Dispose()
+                        
+                        if ($suspiciousCount -gt 0) {
+                            $analysisResult.DetectionReasons += "Total de $suspiciousCount archivos sospechosos"
+                        }
+                    }
+                } catch {
+                    Write-Log "Error analizando comprimido: $($file.Name)" "Yellow"
+                }
+            }
+            
+            # --- ARCHIVOS DE TEXTO/CONFIG (.TXT, .CFG, .INI, .JSON) ---
+            elseif ($file.Extension -in @(".txt", ".cfg", ".ini", ".json", ".yaml", ".yml")) {
+                $totalAnalyzed++
+                
+                try {
+                    $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+                    
+                    if ($content) {
+                        # Buscar configuraciones de cheats
+                        $configStrings = @(
+                            "killaura", "reach", "velocity", "fly", "bhop", "xray",
+                            "autoclick", "cps", "minCPS", "maxCPS", "keybind", "hotkey",
+                            "enabled.*true", "cheat", "hack", "inject"
+                        )
+                        
+                        foreach ($str in $configStrings) {
+                            if ($content -match $str) {
+                                $analysisResult.SuspiciousStrings += $str
+                                $analysisResult.ThreatLevel += 5
+                            }
+                        }
+                    }
+                } catch {}
+            }
+            
+            # === DETERMINAR VEREDICTO ===
+            
+            # Verificar nombre del archivo
+            $nameSignatures = Test-CheatSignature $file.Name
+            if ($nameSignatures.Count -gt 0) {
+                $analysisResult.Signatures = $nameSignatures.Signature
+                $analysisResult.ThreatLevel += 30
+                $analysisResult.DetectionReasons += "Nombre sospechoso: $($nameSignatures.Signature -join ', ')"
+            }
+            
+            # Calcular veredicto final
+            if ($analysisResult.ThreatLevel -ge 80) {
+                $analysisResult.IsCheat = $true
+                $analysisResult.CheatType = "CONFIRMADO"
+                
+                Add-Detection "Descarga Analizada - CHEAT CONFIRMADO" `
+                    "$($file.Name) de $downloadSource - Threat: $($analysisResult.ThreatLevel)" `
+                    "CRITICAL" `
+                    $file.FullName `
+                    $analysisResult.ThreatLevel
+            }
+            elseif ($analysisResult.ThreatLevel -ge 50) {
+                $analysisResult.IsCheat = $true
+                $analysisResult.CheatType = "PROBABLE"
+                
+                Add-Detection "Descarga Analizada - CHEAT PROBABLE" `
+                    "$($file.Name) de $downloadSource - Threat: $($analysisResult.ThreatLevel)" `
+                    "HIGH" `
+                    $file.FullName `
+                    $analysisResult.ThreatLevel
+            }
+            elseif ($analysisResult.ThreatLevel -ge 30) {
+                $analysisResult.IsCheat = $false
+                $analysisResult.CheatType = "SOSPECHOSO"
+                
+                Add-Detection "Descarga Analizada - SOSPECHOSO" `
+                    "$($file.Name) de $downloadSource - Threat: $($analysisResult.ThreatLevel)" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    $analysisResult.ThreatLevel
+            }
+            else {
+                $analysisResult.CheatType = "LIMPIO"
+            }
+            
+            # Solo guardar si es sospechoso o cheat
+            if ($analysisResult.ThreatLevel -ge 30) {
+                $deepAnalysisFindings += [PSCustomObject]@{
+                    FileName = $analysisResult.FileName
+                    CurrentPath = $analysisResult.Path
+                    Extension = $analysisResult.Extension
+                    SizeMB = [math]::Round($analysisResult.Size / 1MB, 2)
+                    Downloaded = $analysisResult.Downloaded
+                    DownloadSource = $analysisResult.DownloadSource
+                    DownloadUrl = $analysisResult.DownloadUrl
+                    Hash = $analysisResult.Hash
+                    IsCheat = $analysisResult.IsCheat
+                    CheatType = $analysisResult.CheatType
+                    ThreatLevel = $analysisResult.ThreatLevel
+                    DetectionReasons = ($analysisResult.DetectionReasons -join " | ")
+                    SuspiciousStrings = ($analysisResult.SuspiciousStrings -join ", ")
+                    Signatures = ($analysisResult.Signatures -join ", ")
+                    InternalFilesCount = $analysisResult.InternalFiles.Count
+                }
+            }
+            
+        } catch {
+            Write-Log "Error procesando $($file.Name): $($_.Exception.Message)" "Yellow"
+        }
+    }
+    
+    # Exportar resultados
+    $deepAnalysisFindings | Export-Csv "$outputDir\34_Deep_Download_Analysis.csv" -NoTypeInformation
+    
+    Write-Log "Análisis Profundo: $totalScanned archivos escaneados, $totalAnalyzed analizados, $($deepAnalysisFindings.Count) detectados" "Green"
+    
+    # Estadísticas detalladas
+    if ($deepAnalysisFindings.Count -gt 0) {
+        Write-Log "`n🎯 RESUMEN DEL ANÁLISIS PROFUNDO:" "Cyan"
+        
+        # Por tipo
+        $byType = $deepAnalysisFindings | Group-Object CheatType | Sort-Object Count -Descending
+        Write-Log "`nPor Veredicto:" "Yellow"
+        foreach ($group in $byType) {
+            $color = switch ($group.Name) {
+                "CONFIRMADO" { "Red" }
+                "PROBABLE" { "DarkRed" }
+                "SOSPECHOSO" { "Yellow" }
+                default { "Gray" }
+            }
+            Write-Log "  - $($group.Name): $($group.Count)" $color
+        }
+        
+        # Por fuente
+        $bySource = $deepAnalysisFindings | Group-Object DownloadSource | Sort-Object Count -Descending
+        Write-Log "`nPor Fuente de Descarga:" "Yellow"
+        foreach ($group in $bySource) {
+            Write-Log "  - $($group.Name): $($group.Count)" "Gray"
+        }
+        
+        # Top 10 archivos más peligrosos
+        $top10 = $deepAnalysisFindings | Sort-Object ThreatLevel -Descending | Select-Object -First 10
+        Write-Log "`n🚨 TOP 10 ARCHIVOS MÁS PELIGROSOS:" "Red"
+        foreach ($item in $top10) {
+            Write-Log "  [$($item.ThreatLevel)] $($item.FileName)" "Red"
+            Write-Log "      Ruta: $($item.CurrentPath)" "Gray"
+            Write-Log "      Fuente: $($item.DownloadSource)" "Gray"
+            Write-Log "      Tipo: $($item.CheatType)" "Gray"
+            if ($item.SuspiciousStrings) {
+                Write-Log "      Strings: $($item.SuspiciousStrings)" "Gray"
+            }
+            Write-Log ""
+        }
+    }
+}
+
+# ============================================
+# MÓDULO 34: ANÁLISIS DE HISTORIAL DE DESCARGAS
+# ============================================
+
+function Invoke-DownloadHistoryAnalysis {
+    Update-Progress "Analizando historial de descargas..."
+    Write-Log "`n=== MÓDULO 34: HISTORIAL DE DESCARGAS ===" "Cyan"
+    
+    $downloadFindings = @()
+    $totalAnalyzed = 0
+    
+    Write-Log "Analizando archivos descargados (navegadores + Windows)..." "Yellow"
+    
+    # === FASE 1: ZONA.IDENTIFIER (Windows) ===
+    Write-Log "Fase 1: Verificando Zone.Identifier de archivos descargados..." "Gray"
+    
+    $downloadLocations = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents"
+    )
+    
+    foreach ($location in $downloadLocations) {
+        if (Test-Path $location) {
+            # Buscar archivos con Zone.Identifier (marcador de descarga)
+            $files = Get-ChildItem -Path $location -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-90) } |
+                Select-Object -First 200
+            
+            foreach ($file in $files) {
+                $totalAnalyzed++
+                
+                try {
+                    # Leer Alternate Data Stream Zone.Identifier
+                    $zoneId = Get-Content -Path $file.FullName -Stream "Zone.Identifier" -ErrorAction SilentlyContinue
+                    
+                    if ($zoneId) {
+                        # Extraer información
+                        $zoneInfo = @{}
+                        foreach ($line in $zoneId) {
+                            if ($line -match "^([^=]+)=(.*)$") {
+                                $zoneInfo[$matches[1]] = $matches[2]
+                            }
+                        }
+                        
+                        # Verificar si fue descargado de internet (ZoneId=3)
+                        if ($zoneInfo["ZoneId"] -eq "3") {
+                            $referrerUrl = $zoneInfo["ReferrerUrl"]
+                            $hostUrl = $zoneInfo["HostUrl"]
+                            
+                            # Analizar URL
+                            $isSuspiciousUrl = $false
+                            $urlReason = ""
+                            
+                            # Dominios sospechosos
+                            $suspiciousDomains = @(
+                                "mediafire", "mega.nz", "anonfiles", "gofile",
+                                "discord.gg", "pastebin", "hastebin", "github.io",
+                                "bit.ly", "tinyurl", "discord.com/attachments"
+                            )
+                            
+                            foreach ($domain in $suspiciousDomains) {
+                                if ($hostUrl -like "*$domain*" -or $referrerUrl -like "*$domain*") {
+                                    $isSuspiciousUrl = $true
+                                    $urlReason = "Descargado de: $domain"
+                                    break
+                                }
+                            }
+                            
+                            # Verificar contenido del archivo
+                            $signatures = Test-CheatSignature $file.Name
+                            
+                            if ($signatures.Count -gt 0 -or $isSuspiciousUrl) {
+                                $severity = if ($signatures.Count -gt 0) { "CRITICAL" } else { "MEDIUM" }
+                                $threatLevel = if ($signatures.Count -gt 0) { 90 } else { 65 }
+                                
+                                Add-Detection "Descarga - Archivo Sospechoso" `
+                                    "$($file.Name) - $urlReason" `
+                                    $severity `
+                                    $file.FullName `
+                                    $threatLevel
+                                
+                                $downloadFindings += [PSCustomObject]@{
+                                    FileName = $file.Name
+                                    Path = $file.FullName
+                                    Size = $file.Length
+                                    Downloaded = $file.CreationTime
+                                    HostUrl = $hostUrl
+                                    ReferrerUrl = $referrerUrl
+                                    Signatures = ($signatures.Signature -join ", ")
+                                    SuspiciousUrl = $isSuspiciousUrl
+                                    Reason = $urlReason
+                                    ThreatLevel = $threatLevel
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    # === FASE 2: CHROME DOWNLOADS ===
+    Write-Log "Fase 2: Analizando historial de Chrome..." "Gray"
+    
+    $chromeHistoryPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\History"
+    if (Test-Path $chromeHistoryPath) {
+        try {
+            # Copiar para evitar lock de Chrome
+            $tempHistory = "$env:TEMP\chrome_history_copy.db"
+            Copy-Item $chromeHistoryPath $tempHistory -Force -ErrorAction SilentlyContinue
+            
+            # Usar System.Data.SQLite para leer
+            Add-Type -AssemblyName System.Data
+            $connection = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$tempHistory")
+            $connection.Open()
+            
+            $query = "SELECT target_path, tab_url, start_time FROM downloads ORDER BY start_time DESC LIMIT 200"
+            $command = $connection.CreateCommand()
+            $command.CommandText = $query
+            $reader = $command.ExecuteReader()
+            
+            while ($reader.Read()) {
+                $targetPath = $reader["target_path"]
+                $url = $reader["tab_url"]
+                
+                if ($targetPath) {
+                    $fileName = [System.IO.Path]::GetFileName($targetPath)
+                    $signatures = Test-CheatSignature $fileName
+                    
+                    # Verificar URL sospechosa
+                    $isSuspiciousUrl = $false
+                    foreach ($domain in $suspiciousDomains) {
+                        if ($url -like "*$domain*") {
+                            $isSuspiciousUrl = $true
+                            break
+                        }
+                    }
+                    
+                    if ($signatures.Count -gt 0 -or $isSuspiciousUrl) {
+                        Add-Detection "Descarga Chrome - Archivo Sospechoso" `
+                            "$fileName de $url" `
+                            "HIGH" `
+                            $targetPath `
+                            85
+                        
+                        $downloadFindings += [PSCustomObject]@{
+                            Source = "Chrome"
+                            FileName = $fileName
+                            Path = $targetPath
+                            Url = $url
+                            Signatures = ($signatures.Signature -join ", ")
+                            ThreatLevel = 85
+                        }
+                    }
+                }
+            }
+            
+            $reader.Close()
+            $connection.Close()
+            Remove-Item $tempHistory -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Log "No se pudo leer historial de Chrome" "Yellow"
+        }
+    }
+    
+    # === FASE 3: FIREFOX DOWNLOADS ===
+    Write-Log "Fase 3: Analizando historial de Firefox..." "Gray"
+    
+    $firefoxProfiles = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -ErrorAction SilentlyContinue
+    foreach ($profile in $firefoxProfiles) {
+        $placesDb = Join-Path $profile.FullName "places.sqlite"
+        if (Test-Path $placesDb) {
+            try {
+                $tempPlaces = "$env:TEMP\firefox_places_copy.db"
+                Copy-Item $placesDb $tempPlaces -Force -ErrorAction SilentlyContinue
+                
+                $connection = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$tempPlaces")
+                $connection.Open()
+                
+                $query = "SELECT url FROM moz_places WHERE url LIKE 'file:///%' ORDER BY last_visit_date DESC LIMIT 200"
+                $command = $connection.CreateCommand()
+                $command.CommandText = $query
+                $reader = $command.ExecuteReader()
+                
+                while ($reader.Read()) {
+                    $url = $reader["url"]
+                    if ($url -match "file:///(.+)") {
+                        $filePath = $matches[1].Replace("/", "\")
+                        $fileName = [System.IO.Path]::GetFileName($filePath)
+                        
+                        $signatures = Test-CheatSignature $fileName
+                        if ($signatures.Count -gt 0) {
+                            Add-Detection "Descarga Firefox - Archivo Sospechoso" `
+                                $fileName `
+                                "HIGH" `
+                                $filePath `
+                                80
+                        }
+                    }
+                }
+                
+                $reader.Close()
+                $connection.Close()
+                Remove-Item $tempPlaces -Force -ErrorAction SilentlyContinue
+            } catch {}
+        }
+    }
+    
+    # === FASE 4: EDGE DOWNLOADS ===
+    Write-Log "Fase 4: Analizando historial de Edge..." "Gray"
+    
+    $edgeHistoryPath = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\History"
+    if (Test-Path $edgeHistoryPath) {
+        # Similar a Chrome (Edge usa Chromium)
+        try {
+            $tempHistory = "$env:TEMP\edge_history_copy.db"
+            Copy-Item $edgeHistoryPath $tempHistory -Force -ErrorAction SilentlyContinue
+            
+            $connection = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$tempHistory")
+            $connection.Open()
+            
+            $query = "SELECT target_path, tab_url FROM downloads ORDER BY start_time DESC LIMIT 100"
+            $command = $connection.CreateCommand()
+            $command.CommandText = $query
+            $reader = $command.ExecuteReader()
+            
+            while ($reader.Read()) {
+                $targetPath = $reader["target_path"]
+                $url = $reader["tab_url"]
+                
+                if ($targetPath) {
+                    $fileName = [System.IO.Path]::GetFileName($targetPath)
+                    $signatures = Test-CheatSignature $fileName
+                    
+                    if ($signatures.Count -gt 0) {
+                        Add-Detection "Descarga Edge - Archivo Sospechoso" `
+                            "$fileName de $url" `
+                            "HIGH" `
+                            $targetPath `
+                            80
+                        
+                        $downloadFindings += [PSCustomObject]@{
+                            Source = "Edge"
+                            FileName = $fileName
+                            Path = $targetPath
+                            Url = $url
+                            Signatures = ($signatures.Signature -join ", ")
+                            ThreatLevel = 80
+                        }
+                    }
+                }
+            }
+            
+            $reader.Close()
+            $connection.Close()
+            Remove-Item $tempHistory -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Log "No se pudo leer historial de Edge" "Yellow"
+        }
+    }
+    
+    # === FASE 5: OPERA GX DOWNLOADS ===
+    Write-Log "Fase 5: Analizando historial de Opera GX..." "Gray"
+    
+    $operaGXPaths = @(
+        "$env:APPDATA\Opera Software\Opera GX Stable\History",
+        "$env:APPDATA\Opera Software\Opera Stable\History"
+    )
+    
+    foreach ($operaPath in $operaGXPaths) {
+        if (Test-Path $operaPath) {
+            try {
+                $tempHistory = "$env:TEMP\opera_history_copy.db"
+                Copy-Item $operaPath $tempHistory -Force -ErrorAction SilentlyContinue
+                
+                $connection = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$tempHistory")
+                $connection.Open()
+                
+                $query = "SELECT target_path, tab_url, start_time FROM downloads ORDER BY start_time DESC LIMIT 100"
+                $command = $connection.CreateCommand()
+                $command.CommandText = $query
+                $reader = $command.ExecuteReader()
+                
+                while ($reader.Read()) {
+                    $targetPath = $reader["target_path"]
+                    $url = $reader["tab_url"]
+                    
+                    if ($targetPath) {
+                        $fileName = [System.IO.Path]::GetFileName($targetPath)
+                        $signatures = Test-CheatSignature $fileName
+                        
+                        # Verificar URL sospechosa
+                        $isSuspiciousUrl = $false
+                        foreach ($domain in $suspiciousDomains) {
+                            if ($url -like "*$domain*") {
+                                $isSuspiciousUrl = $true
+                                break
+                            }
+                        }
+                        
+                        if ($signatures.Count -gt 0 -or $isSuspiciousUrl) {
+                            Add-Detection "Descarga Opera GX - Archivo Sospechoso" `
+                                "$fileName de $url" `
+                                "HIGH" `
+                                $targetPath `
+                                85
+                            
+                            $downloadFindings += [PSCustomObject]@{
+                                Source = "Opera GX"
+                                FileName = $fileName
+                                Path = $targetPath
+                                Url = $url
+                                Signatures = ($signatures.Signature -join ", ")
+                                SuspiciousUrl = $isSuspiciousUrl
+                                ThreatLevel = 85
+                            }
+                        }
+                    }
+                }
+                
+                $reader.Close()
+                $connection.Close()
+                Remove-Item $tempHistory -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Log "No se pudo leer historial de Opera GX" "Yellow"
+            }
+        }
+    }
+    
+    # === FASE 6: BRAVE BROWSER DOWNLOADS ===
+    Write-Log "Fase 6: Analizando historial de Brave..." "Gray"
+    
+    $bravePaths = @(
+        "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\History",
+        "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser-Dev\User Data\Default\History"
+    )
+    
+    foreach ($bravePath in $bravePaths) {
+        if (Test-Path $bravePath) {
+            try {
+                $tempHistory = "$env:TEMP\brave_history_copy.db"
+                Copy-Item $bravePath $tempHistory -Force -ErrorAction SilentlyContinue
+                
+                $connection = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$tempHistory")
+                $connection.Open()
+                
+                $query = "SELECT target_path, tab_url, start_time FROM downloads ORDER BY start_time DESC LIMIT 100"
+                $command = $connection.CreateCommand()
+                $command.CommandText = $query
+                $reader = $command.ExecuteReader()
+                
+                while ($reader.Read()) {
+                    $targetPath = $reader["target_path"]
+                    $url = $reader["tab_url"]
+                    
+                    if ($targetPath) {
+                        $fileName = [System.IO.Path]::GetFileName($targetPath)
+                        $signatures = Test-CheatSignature $fileName
+                        
+                        # Verificar URL sospechosa
+                        $isSuspiciousUrl = $false
+                        foreach ($domain in $suspiciousDomains) {
+                            if ($url -like "*$domain*") {
+                                $isSuspiciousUrl = $true
+                                break
+                            }
+                        }
+                        
+                        if ($signatures.Count -gt 0 -or $isSuspiciousUrl) {
+                            Add-Detection "Descarga Brave - Archivo Sospechoso" `
+                                "$fileName de $url" `
+                                "HIGH" `
+                                $targetPath `
+                                85
+                            
+                            $downloadFindings += [PSCustomObject]@{
+                                Source = "Brave"
+                                FileName = $fileName
+                                Path = $targetPath
+                                Url = $url
+                                Signatures = ($signatures.Signature -join ", ")
+                                SuspiciousUrl = $isSuspiciousUrl
+                                ThreatLevel = 85
+                            }
+                        }
+                    }
+                }
+                
+                $reader.Close()
+                $connection.Close()
+                Remove-Item $tempHistory -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Log "No se pudo leer historial de Brave" "Yellow"
+            }
+        }
+    }
+    
+    # === FASE 7: INTERNET EXPLORER / MICROSOFT EDGE (LEGACY) ===
+    Write-Log "Fase 7: Analizando historial de Internet Explorer..." "Gray"
+    
+    # IE guarda historial en registro y archivos index.dat
+    $ieHistoryPath = "$env:LOCALAPPDATA\Microsoft\Windows\INetCache"
+    if (Test-Path $ieHistoryPath) {
+        $ieFiles = Get-ChildItem -Path $ieHistoryPath -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @(".exe", ".dll", ".jar", ".zip", ".rar") } |
+            Select-Object -First 50
+        
+        foreach ($file in $ieFiles) {
+            $signatures = Test-CheatSignature $file.Name
+            if ($signatures.Count -gt 0) {
+                Add-Detection "Descarga IE/Edge Legacy - Archivo Sospechoso" `
+                    $file.Name `
+                    "HIGH" `
+                    $file.FullName `
+                    75
+                
+                $downloadFindings += [PSCustomObject]@{
+                    Source = "IE/Edge Legacy"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Signatures = ($signatures.Signature -join ", ")
+                    ThreatLevel = 75
+                }
+            }
+        }
+    }
+    
+    # === FASE 8: MICROSOFT STORE DOWNLOADS ===
+    Write-Log "Fase 8: Analizando descargas de Microsoft Store..." "Gray"
+    
+    $msStorePath = "$env:LOCALAPPDATA\Packages"
+    if (Test-Path $msStorePath) {
+        # Buscar archivos descargados recientemente
+        $storeFiles = Get-ChildItem -Path $msStorePath -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { 
+                $_.Extension -in @(".exe", ".dll", ".jar", ".appx", ".msix") -and
+                $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+            } | Select-Object -First 50
+        
+        foreach ($file in $storeFiles) {
+            $signatures = Test-CheatSignature $file.Name
+            if ($signatures.Count -gt 0) {
+                Add-Detection "Microsoft Store - Archivo Sospechoso" `
+                    "$($file.Name) en Store packages" `
+                    "MEDIUM" `
+                    $file.FullName `
+                    65
+                
+                $downloadFindings += [PSCustomObject]@{
+                    Source = "Microsoft Store"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Signatures = ($signatures.Signature -join ", ")
+                    ThreatLevel = 65
+                }
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $downloadFindings | Export-Csv "$outputDir\33_Download_History.csv" -NoTypeInformation
+    Write-Log "Historial de Descargas: $totalAnalyzed archivos analizados, $($downloadFindings.Count) sospechosos" "Green"
+    
+    if ($downloadFindings.Count -gt 0) {
+        Write-Log "`n📊 Descargas sospechosas por navegador:" "Cyan"
+        $downloadFindings | Group-Object Source | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+        
+        Write-Log "`n🌐 Descargas por fuente/dominio:" "Cyan"
+        $downloadFindings | Group-Object {
+            if ($_.Url -like "*mediafire*") { "MediaFire" }
+            elseif ($_.Url -like "*discord*") { "Discord" }
+            elseif ($_.Url -like "*mega.nz*") { "Mega" }
+            elseif ($_.Url -like "*github*") { "GitHub" }
+            elseif ($_.Url -like "*pastebin*") { "Pastebin" }
+            elseif ($_.Url -like "*anonfiles*") { "AnonFiles" }
+            elseif ($_.Url -like "*gofile*") { "GoFile" }
+            else { "Otros" }
+        } | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+        
+        # Mostrar archivos más sospechosos
+        $topDownloads = $downloadFindings | Sort-Object ThreatLevel -Descending | Select-Object -First 5
+        if ($topDownloads.Count -gt 0) {
+            Write-Log "`n🚨 Top 5 descargas más sospechosas:" "Red"
+            foreach ($dl in $topDownloads) {
+                Write-Log "  - $($dl.FileName) (Threat: $($dl.ThreatLevel)) - $($dl.Source)" "Red"
+            }
+        }
+    }
+}
+
+# ============================================
+# MÓDULO 32: DETECCIÓN DE AUTOCLICKERS DISFRAZADOS
+# ============================================
+
+function Invoke-DisguisedAutoClickerDetection {
+    Update-Progress "Detectando AutoClickers disfrazados de procesos legítimos..."
+    Write-Log "`n=== MÓDULO 32: AUTOCLICKERS DISFRAZADOS ===" "Cyan"
+    
+    $disguisedClickers = @()
+    $totalAnalyzed = 0
+    
+    Write-Log "Buscando AutoClickers ocultos con nombres de sistema..." "Yellow"
+    
+    # === PATRONES CONDUCTUALES DE AUTOCLICKERS ===
+    # Características que SIEMPRE tienen los AutoClickers Java:
+    $autoClickerBehaviors = @{
+        # Librerías Java específicas
+        JavaLibraries = @("jna", "jnativehook", "jansi", "robot", "awt")
+        
+        # Métodos comunes en AutoClickers
+        Methods = @(
+            "mousePress", "mouseRelease", "mouse.click", "robot.delay",
+            "Thread.sleep", "mouseEvent", "InputEvent", "getAsyncKeyState",
+            "SendInput", "keybd_event", "mouse_event"
+        )
+        
+        # Strings relacionados con clicks
+        ClickStrings = @(
+            "cps", "clicks", "clicking", "leftclick", "rightclick",
+            "button", "pressed", "released", "interval", "delay",
+            "randomize", "jitter", "butterfly", "drag"
+        )
+        
+        # Configuraciones típicas
+        ConfigStrings = @(
+            "minCPS", "maxCPS", "clickDelay", "clickInterval",
+            "enableToggle", "hotkey", "bind", "keybind"
+        )
+    }
+    
+    # === NOMBRES LEGÍTIMOS COMÚNMENTE USADOS ===
+    $legitimateNames = @(
+        "svchost", "system", "service", "host", "runtime", "java", "javaw",
+        "update", "microsoft", "windows", "explorer", "taskhost", "csrss",
+        "winlogon", "lsass", "spoolsv", "audiodg", "conhost", "dwm",
+        "taskhostw", "sihost", "fontdrvhost", "searchui", "startmenuexperiencehost"
+    )
+    
+    # === FASE 1: ANÁLISIS DE PROCESOS EN EJECUCIÓN ===
+    Write-Log "Fase 1: Analizando procesos Java en ejecución..." "Gray"
+    
+    $javaProcesses = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "java" -or $_.MainModule.FileVersionInfo.FileDescription -match "Java" }
+    
+    foreach ($proc in $javaProcesses) {
+        $totalAnalyzed++
+        
+        try {
+            # Obtener línea de comandos
+            $cmdLine = (Get-WmiObject Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue).CommandLine
+            
+            if ($cmdLine) {
+                # Buscar si ejecuta un JAR
+                if ($cmdLine -match "-jar\s+([^\s]+\.jar)") {
+                    $jarPath = $matches[1]
+                    $jarName = [System.IO.Path]::GetFileName($jarPath)
+                    
+                    # Verificar si el JAR tiene nombre genérico
+                    $hasGenericName = $false
+                    foreach ($legitName in $legitimateNames) {
+                        if ($jarName -match "^$legitName") {
+                            $hasGenericName = $true
+                            break
+                        }
+                    }
+                    
+                    if ($hasGenericName) {
+                        Add-Detection "AutoClicker Disfrazado - Proceso Java" `
+                            "Java ejecutando: $jarName (nombre genérico sospechoso)" `
+                            "HIGH" `
+                            $jarPath `
+                            85
+                        
+                        $disguisedClickers += [PSCustomObject]@{
+                            Type = "Java Process"
+                            ProcessName = $proc.Name
+                            PID = $proc.Id
+                            JarFile = $jarName
+                            JarPath = $jarPath
+                            CommandLine = $cmdLine
+                            ThreatLevel = 85
+                        }
+                    }
+                    
+                    # Analizar el JAR si existe
+                    if (Test-Path $jarPath) {
+                        $behaviorScore = 0
+                        
+                        try {
+                            $bytes = [System.IO.File]::ReadAllBytes($jarPath)
+                            $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                            
+                            # Contar behaviors detectados
+                            foreach ($category in $autoClickerBehaviors.Keys) {
+                                foreach ($pattern in $autoClickerBehaviors[$category]) {
+                                    if ($content -match $pattern) {
+                                        $behaviorScore += 10
+                                    }
+                                }
+                            }
+                            
+                            if ($behaviorScore -ge 30) {
+                                Add-Detection "AutoClicker Disfrazado - Comportamiento Detectado" `
+                                    "$jarName tiene score de $behaviorScore (AutoClicker confirmado)" `
+                                    "CRITICAL" `
+                                    $jarPath `
+                                    95
+                            }
+                            
+                        } catch {}
+                    }
+                }
+            }
+            
+        } catch {}
+    }
+    
+    # === FASE 2: BUSCAR EJECUTABLES CON NOMBRES GENÉRICOS ===
+    Write-Log "Fase 2: Buscando ejecutables con nombres de sistema..." "Gray"
+    
+    $searchPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA",
+        "$env:TEMP"
+    )
+    
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            foreach ($legitName in $legitimateNames) {
+                # Buscar variaciones
+                $patterns = @(
+                    "$legitName.exe",
+                    "$legitName*.exe",
+                    "$legitName.jar",
+                    "$legitName*.jar"
+                )
+                
+                foreach ($pattern in $patterns) {
+                    $files = Get-ChildItem -Path $path -Filter $pattern -Recurse -File -Force -ErrorAction SilentlyContinue |
+                        Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-90) } |
+                        Select-Object -First 10
+                    
+                    foreach ($file in $files) {
+                        $totalAnalyzed++
+                        
+                        # Verificar que NO esté en ubicación legítima
+                        $isLegitLocation = $file.Directory.FullName -like "C:\Windows\System32*" -or
+                                          $file.Directory.FullName -like "C:\Program Files*"
+                        
+                        if (-not $isLegitLocation) {
+                            # Analizar comportamiento del archivo
+                            $isSuspicious = $false
+                            $suspicionReasons = @()
+                            
+                            # 1. Tamaño sospechoso (AutoClickers son pequeños, 50KB-5MB)
+                            if ($file.Length -gt 50KB -and $file.Length -lt 5MB) {
+                                $isSuspicious = $true
+                                $suspicionReasons += "Tamaño: $([math]::Round($file.Length / 1KB, 0)) KB"
+                            }
+                            
+                            # 2. Sin firma digital
+                            if ($file.Extension -eq ".exe") {
+                                $sig = Get-AuthenticodeSignature $file.FullName -ErrorAction SilentlyContinue
+                                if ($sig -and $sig.Status -ne "Valid") {
+                                    $isSuspicious = $true
+                                    $suspicionReasons += "Sin firma válida"
+                                }
+                            }
+                            
+                            # 3. Análisis de contenido
+                            if ($file.Extension -in @(".exe", ".jar")) {
+                                try {
+                                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                                    $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                                    
+                                    $behaviorMatches = 0
+                                    foreach ($category in $autoClickerBehaviors.Keys) {
+                                        foreach ($pattern in $autoClickerBehaviors[$category]) {
+                                            if ($content -match $pattern) {
+                                                $behaviorMatches++
+                                            }
+                                        }
+                                    }
+                                    
+                                    if ($behaviorMatches -ge 5) {
+                                        $isSuspicious = $true
+                                        $suspicionReasons += "$behaviorMatches comportamientos de AutoClicker"
+                                    }
+                                } catch {}
+                            }
+                            
+                            if ($isSuspicious) {
+                                Add-Detection "AutoClicker Disfrazado - Nombre de Sistema" `
+                                    "$($file.Name) en $($file.Directory.FullName): $($suspicionReasons -join ', ')" `
+                                    "CRITICAL" `
+                                    $file.FullName `
+                                    90
+                                
+                                $disguisedClickers += [PSCustomObject]@{
+                                    Type = "System Name"
+                                    FileName = $file.Name
+                                    Path = $file.FullName
+                                    Size = $file.Length
+                                    Reasons = ($suspicionReasons -join " | ")
+                                    Modified = $file.LastWriteTime
+                                    Hash = Get-FileHash-Safe $file.FullName
+                                    ThreatLevel = 90
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # === FASE 3: DETECCIÓN HEURÍSTICA AVANZADA ===
+    Write-Log "Fase 3: Análisis heurístico de comportamiento..." "Gray"
+    
+    # Buscar CUALQUIER ejecutable/JAR reciente en Downloads/Desktop
+    $recentFiles = @()
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $files = Get-ChildItem -Path $path -Include "*.exe","*.jar" -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30) -and
+                    $_.Length -gt 10KB -and $_.Length -lt 10MB
+                } | Select-Object -First 50
+            
+            $recentFiles += $files
+        }
+    }
+    
+    foreach ($file in $recentFiles) {
+        $totalAnalyzed++
+        
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+            
+            # Sistema de puntuación conductual
+            $clickerScore = 0
+            $evidences = @()
+            
+            # Categoría 1: Librerías Java (30 puntos)
+            foreach ($lib in $autoClickerBehaviors.JavaLibraries) {
+                if ($content -match $lib) {
+                    $clickerScore += 6
+                    $evidences += "Librería: $lib"
+                }
+            }
+            
+            # Categoría 2: Métodos de mouse (40 puntos)
+            foreach ($method in $autoClickerBehaviors.Methods) {
+                if ($content -match $method) {
+                    $clickerScore += 8
+                    $evidences += "Método: $method"
+                }
+            }
+            
+            # Categoría 3: Strings de clicks (20 puntos)
+            foreach ($str in $autoClickerBehaviors.ClickStrings) {
+                if ($content -match $str) {
+                    $clickerScore += 4
+                    $evidences += "String: $str"
+                }
+            }
+            
+            # Categoría 4: Configuración (10 puntos)
+            foreach ($cfg in $autoClickerBehaviors.ConfigStrings) {
+                if ($content -match $cfg) {
+                    $clickerScore += 2
+                    $evidences += "Config: $cfg"
+                }
+            }
+            
+            # Si score >= 50, es AutoClicker
+            if ($clickerScore -ge 50) {
+                Add-Detection "AutoClicker Disfrazado - Análisis Heurístico" `
+                    "$($file.Name) - Score: $clickerScore/100 - Evidencias: $($evidences.Count)" `
+                    "CRITICAL" `
+                    $file.FullName `
+                    95
+                
+                $disguisedClickers += [PSCustomObject]@{
+                    Type = "Heuristic Detection"
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    ClickerScore = $clickerScore
+                    Evidences = ($evidences -join " | ")
+                    ThreatLevel = 95
+                }
+            }
+            # Si score >= 30, sospechoso
+            elseif ($clickerScore -ge 30) {
+                Add-Detection "AutoClicker Disfrazado - Sospecha Alta" `
+                    "$($file.Name) - Score: $clickerScore/100" `
+                    "HIGH" `
+                    $file.FullName `
+                    75
+            }
+            
+        } catch {}
+    }
+    
+    # === FASE 4: ARCHIVOS CON ÍCONOS ENGAÑOSOS ===
+    Write-Log "Fase 4: Detectando archivos con íconos falsos..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $exeFiles = Get-ChildItem -Path $path -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-60) } |
+                Select-Object -First 30
+            
+            foreach ($exe in $exeFiles) {
+                $totalAnalyzed++
+                
+                try {
+                    # Obtener información del archivo
+                    $fileInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe.FullName)
+                    
+                    # Si la descripción no coincide con el nombre
+                    if ($fileInfo.FileDescription) {
+                        $descLower = $fileInfo.FileDescription.ToLower()
+                        $nameLower = $exe.BaseName.ToLower()
+                        
+                        # Descripción dice una cosa, nombre otra
+                        if ($descLower -match "calculator|notepad|paint|wordpad" -and 
+                            $nameLower -notmatch "calc|notepad|paint|wordpad") {
+                            
+                            Add-Detection "AutoClicker Disfrazado - Ícono Engañoso" `
+                                "$($exe.Name) - Descripción: '$($fileInfo.FileDescription)'" `
+                                "HIGH" `
+                                $exe.FullName `
+                                85
+                            
+                            $disguisedClickers += [PSCustomObject]@{
+                                Type = "Fake Icon"
+                                FileName = $exe.Name
+                                Path = $exe.FullName
+                                FakeDescription = $fileInfo.FileDescription
+                                ThreatLevel = 85
+                            }
+                        }
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $disguisedClickers | Export-Csv "$outputDir\31_Disguised_AutoClickers.csv" -NoTypeInformation
+    Write-Log "AutoClickers Disfrazados: $totalAnalyzed archivos analizados, $($disguisedClickers.Count) detectados" "Green"
+    
+    if ($disguisedClickers.Count -gt 0) {
+        Write-Log "`n⚠️  ALERTA: Detectados AutoClickers disfrazados!" "Red"
+        $disguisedClickers | Group-Object Type | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Red"
+        }
+    }
+}
+
+# ============================================
+# MÓDULO 31: ANÁLISIS ESPECIALIZADO DE ARCHIVOS JAR
+# ============================================
+
+function Invoke-JarAnalysis {
+    Update-Progress "Analizando archivos JAR (AutoClickers y Cheats Java)..."
+    Write-Log "`n=== MÓDULO 31: ANÁLISIS ESPECIALIZADO DE JAR ===" "Cyan"
+    
+    $jarFindings = @()
+    $totalScanned = 0
+    
+    Write-Log "Iniciando análisis profundo de archivos JAR..." "Yellow"
+    
+    # Carpetas donde buscar JARs
+    $searchPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA",
+        "$env:TEMP",
+        "$env:APPDATA\.minecraft",
+        "$env:LOCALAPPDATA\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe"
+    )
+    
+    # === FASE 1: BUSCAR TODOS LOS JAR ===
+    Write-Log "Fase 1: Localizando archivos JAR..." "Gray"
+    
+    $allJars = @()
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            $jars = Get-ChildItem -Path $path -Filter "*.jar" -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-180) } |
+                Select-Object -First 100
+            
+            $allJars += $jars
+        }
+    }
+    
+    Write-Log "Encontrados $($allJars.Count) archivos JAR para analizar" "Cyan"
+    
+    # === FASE 2: VERIFICAR MAGIC BYTES (JAR = ZIP) ===
+    Write-Log "Fase 2: Verificando estructura de archivos JAR..." "Gray"
+    
+    foreach ($jar in $allJars) {
+        $totalScanned++
+        
+        $magic = Get-FileMagicBytes -Path $jar.FullName -ByteCount 4
+        
+        # JAR debe ser ZIP (PK signature)
+        if ($magic -notlike "504B*") {
+            Add-Detection "JAR - Extensión Falsa" `
+                "$($jar.Name) no es un archivo ZIP válido" `
+                "HIGH" `
+                $jar.FullName `
+                85
+            
+            $jarFindings += [PSCustomObject]@{
+                Category = "Fake JAR"
+                FileName = $jar.Name
+                Path = $jar.FullName
+                Issue = "No es ZIP válido"
+                MagicBytes = $magic
+                ThreatLevel = 85
+            }
+            continue
+        }
+        
+        # === FASE 3: ANÁLISIS DE NOMBRES SOSPECHOSOS ===
+        $signatures = Test-CheatSignature $jar.Name
+        
+        if ($signatures.Count -gt 0) {
+            Add-Detection "JAR - Nombre Sospechoso" `
+                "$($jar.Name) contiene palabras clave de cheats" `
+                "HIGH" `
+                $jar.FullName `
+                90
+            
+            $jarFindings += [PSCustomObject]@{
+                Category = "Suspicious Name"
+                FileName = $jar.Name
+                Path = $jar.FullName
+                Signatures = ($signatures.Signature -join ", ")
+                Size = $jar.Length
+                Modified = $jar.LastWriteTime
+                Hash = Get-FileHash-Safe $jar.FullName
+                ThreatLevel = 90
+            }
+        }
+        
+        # === FASE 4: PATRONES DE AUTOCLICKERS ===
+        $autoClickerPatterns = @(
+            "auto", "click", "clicker", "ghost", "macro", "jna", "jnative",
+            "left", "mouse", "record", "replay", "button", "cps"
+        )
+        
+        $matchedPatterns = @()
+        foreach ($pattern in $autoClickerPatterns) {
+            if ($jar.Name -match $pattern) {
+                $matchedPatterns += $pattern
+            }
+        }
+        
+        if ($matchedPatterns.Count -ge 2) {
+            Add-Detection "JAR - Posible AutoClicker" `
+                "$($jar.Name) coincide con $($matchedPatterns.Count) patrones de AutoClicker" `
+                "HIGH" `
+                $jar.FullName `
+                85
+            
+            $jarFindings += [PSCustomObject]@{
+                Category = "AutoClicker Pattern"
+                FileName = $jar.Name
+                Path = $jar.FullName
+                Patterns = ($matchedPatterns -join ", ")
+                ThreatLevel = 85
+            }
+        }
+        
+        # === FASE 5: ANÁLISIS DE CONTENIDO INTERNO ===
+        try {
+            # Leer el JAR como ZIP para extraer lista de archivos
+            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+            
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($jar.FullName)
+            $entries = $zip.Entries
+            
+            $suspiciousEntries = @()
+            $hasManifest = $false
+            $hasNativeLibs = $false
+            $hasClassFiles = $false
+            
+            foreach ($entry in $entries) {
+                $entryName = $entry.FullName
+                
+                # Verificar MANIFEST.MF
+                if ($entryName -eq "META-INF/MANIFEST.MF") {
+                    $hasManifest = $true
+                }
+                
+                # Verificar archivos .class
+                if ($entryName -match "\.class$") {
+                    $hasClassFiles = $true
+                }
+                
+                # Buscar librerías nativas (común en AutoClickers)
+                if ($entryName -match "\.(dll|so|dylib)$") {
+                    $hasNativeLibs = $true
+                    $suspiciousEntries += $entryName
+                }
+                
+                # Buscar JNativeHook (usado para capturar teclas/mouse)
+                if ($entryName -match "jnativehook|jna-|jansi") {
+                    $suspiciousEntries += $entryName
+                }
+                
+                # Buscar nombres sospechosos dentro del JAR
+                $entrySignatures = Test-CheatSignature $entryName
+                if ($entrySignatures.Count -gt 0) {
+                    $suspiciousEntries += $entryName
+                }
+            }
+            
+            $zip.Dispose()
+            
+            # === DETECCIONES BASADAS EN CONTENIDO ===
+            
+            # Sin MANIFEST (JAR mal formado o modificado)
+            if (-not $hasManifest -and $hasClassFiles) {
+                Add-Detection "JAR - Sin MANIFEST.MF" `
+                    "$($jar.Name) no tiene MANIFEST (JAR corrupto o modificado)" `
+                    "MEDIUM" `
+                    $jar.FullName `
+                    65
+            }
+            
+            # Librerías nativas (muy sospechoso en AutoClickers)
+            if ($hasNativeLibs) {
+                Add-Detection "JAR - Contiene Librerías Nativas" `
+                    "$($jar.Name) tiene DLLs/SO embebidas: $($suspiciousEntries -join ', ')" `
+                    "HIGH" `
+                    $jar.FullName `
+                    85
+                
+                $jarFindings += [PSCustomObject]@{
+                    Category = "Native Libraries"
+                    FileName = $jar.Name
+                    Path = $jar.FullName
+                    Libraries = ($suspiciousEntries -join ", ")
+                    ThreatLevel = 85
+                }
+            }
+            
+            # Entradas sospechosas
+            if ($suspiciousEntries.Count -gt 0) {
+                Add-Detection "JAR - Archivos Sospechosos Internos" `
+                    "$($jar.Name) contiene: $($suspiciousEntries -join ', ')" `
+                    "HIGH" `
+                    $jar.FullName `
+                    80
+                
+                $jarFindings += [PSCustomObject]@{
+                    Category = "Suspicious Internal Files"
+                    FileName = $jar.Name
+                    Path = $jar.FullName
+                    InternalFiles = ($suspiciousEntries -join ", ")
+                    ThreatLevel = 80
+                }
+            }
+            
+            # JAR sin archivos .class (solo recursos, posible dropper)
+            if (-not $hasClassFiles -and $jar.Length -gt 100KB) {
+                Add-Detection "JAR - Sin Archivos .class" `
+                    "$($jar.Name) no contiene clases Java (posible dropper)" `
+                    "MEDIUM" `
+                    $jar.FullName `
+                    70
+            }
+            
+        } catch {
+            Write-Log "Error analizando contenido de $($jar.Name): $($_.Exception.Message)" "Yellow"
+        }
+        
+        # === FASE 6: TAMAÑO SOSPECHOSO ===
+        $sizeMB = [math]::Round($jar.Length / 1MB, 2)
+        
+        # JAR muy pequeño pero ejecutable
+        if ($jar.Length -lt 10KB) {
+            Add-Detection "JAR - Tamaño Sospechosamente Pequeño" `
+                "$($jar.Name) solo $($jar.Length) bytes" `
+                "MEDIUM" `
+                $jar.FullName `
+                60
+        }
+        
+        # JAR muy grande (puede contener natives o ser empaquetado)
+        if ($jar.Length -gt 50MB) {
+            Add-Detection "JAR - Tamaño Inusualmente Grande" `
+                "$($jar.Name) tiene $sizeMB MB" `
+                "MEDIUM" `
+                $jar.FullName `
+                60
+        }
+        
+        # === FASE 7: UBICACIÓN SOSPECHOSA ===
+        $suspiciousLocations = @(
+            "$env:TEMP",
+            "$env:LOCALAPPDATA\Temp",
+            "C:\Windows\Temp",
+            "$env:APPDATA\Microsoft\Windows\Start Menu"
+        )
+        
+        foreach ($suspLoc in $suspiciousLocations) {
+            if ($jar.Directory.FullName -like "$suspLoc*") {
+                Add-Detection "JAR - Ubicación Sospechosa" `
+                    "$($jar.Name) en carpeta temporal: $($jar.Directory.FullName)" `
+                    "MEDIUM" `
+                    $jar.FullName `
+                    65
+                
+                $jarFindings += [PSCustomObject]@{
+                    Category = "Suspicious Location"
+                    FileName = $jar.Name
+                    Path = $jar.FullName
+                    Location = $jar.Directory.FullName
+                    ThreatLevel = 65
+                }
+                break
+            }
+        }
+        
+        # === FASE 8: TIMESTAMP ANALYSIS ===
+        $age = ((Get-Date) - $jar.LastWriteTime).TotalDays
+        
+        # JAR muy reciente en Downloads
+        if ($age -lt 1 -and $jar.Directory.FullName -like "*Downloads*") {
+            Add-Detection "JAR - Descargado Recientemente" `
+                "$($jar.Name) descargado hace $([math]::Round($age * 24, 1)) horas" `
+                "MEDIUM" `
+                $jar.FullName `
+                60
+        }
+        
+        # === FASE 9: ANÁLISIS DE STRINGS EN JAR ===
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($jar.FullName)
+            $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+            
+            # Buscar strings comunes en cheats Java
+            $cheatStrings = @(
+                "killaura", "bhop", "fly", "speed", "reach", "velocity", "esp",
+                "aimbot", "autoclicker", "jnativehook", "mouse.click", "robot.delay",
+                "minecraft", "mojang", "bedrock", "packet", "inject"
+            )
+            
+            $foundStrings = @()
+            foreach ($str in $cheatStrings) {
+                if ($content -match $str) {
+                    $foundStrings += $str
+                }
+            }
+            
+            if ($foundStrings.Count -ge 3) {
+                Add-Detection "JAR - Strings de Cheat Detectados" `
+                    "$($jar.Name) contiene: $($foundStrings -join ', ')" `
+                    "CRITICAL" `
+                    $jar.FullName `
+                    95
+                
+                $jarFindings += [PSCustomObject]@{
+                    Category = "Cheat Strings"
+                    FileName = $jar.Name
+                    Path = $jar.FullName
+                    DetectedStrings = ($foundStrings -join ", ")
+                    StringCount = $foundStrings.Count
+                    ThreatLevel = 95
+                }
+            }
+            
+        } catch {
+            Write-Log "Error leyendo strings de $($jar.Name)" "Yellow"
+        }
+    }
+    
+    # === FASE 10: BUSCAR DEPENDENCIAS SOSPECHOSAS ===
+    Write-Log "Fase 10: Buscando dependencias de JNativeHook..." "Gray"
+    
+    $jnaDependencies = @("jna-*.jar", "jnativehook*.jar", "jansi*.jar")
+    
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            foreach ($dep in $jnaDependencies) {
+                $found = Get-ChildItem -Path $path -Filter $dep -Recurse -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-90) }
+                
+                foreach ($file in $found) {
+                    Add-Detection "JAR - Dependencia de AutoClicker" `
+                        "$($file.Name) es librería usada por AutoClickers" `
+                        "HIGH" `
+                        $file.FullName `
+                        80
+                    
+                    $jarFindings += [PSCustomObject]@{
+                        Category = "AutoClicker Dependency"
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        Type = "JNA/JNativeHook"
+                        ThreatLevel = 80
+                    }
+                }
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $jarFindings | Export-Csv "$outputDir\30_JAR_Analysis.csv" -NoTypeInformation
+    Write-Log "Análisis JAR: $totalScanned archivos analizados, $($jarFindings.Count) hallazgos" "Green"
+    
+    # Estadísticas
+    if ($jarFindings.Count -gt 0) {
+        Write-Log "`nEstadísticas de JAR:" "Cyan"
+        $jarFindings | Group-Object Category | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+        
+        # Top JARs más sospechosos
+        $topJars = $jarFindings | Sort-Object ThreatLevel -Descending | Select-Object -First 5
+        if ($topJars.Count -gt 0) {
+            Write-Log "`nTop 5 JARs más sospechosos:" "Red"
+            foreach ($jar in $topJars) {
+                Write-Log "  - $($jar.FileName) (Threat: $($jar.ThreatLevel))" "Red"
+            }
+        }
+    }
+}
+
+# ============================================
 # MÓDULO 30: ANÁLISIS DE MODIFICACIONES DEL SISTEMA
 # ============================================
 
@@ -4623,6 +6528,11 @@ function New-HTMLReport {
                 <div class="file-item">📄 27_ADS_Streams.csv - Alternate Data Streams</div>
                 <div class="file-item">📄 28_Memory_Analysis.csv - Análisis de memoria y hooks</div>
                 <div class="file-item">📄 29_System_Modifications.csv - Modificaciones del sistema</div>
+                <div class="file-item">📄 30_JAR_Analysis.csv - Análisis especializado de archivos JAR (AutoClickers/Cheats Java)</div>
+                <div class="file-item">📄 31_Disguised_AutoClickers.csv - AutoClickers disfrazados de procesos del sistema</div>
+                <div class="file-item">📄 32_Invisible_Windows.csv - Ventanas invisibles (solo visibles localmente)</div>
+                <div class="file-item">📄 33_Download_History.csv - Historial de descargas sospechosas</div>
+                <div class="file-item">📄 34_Deep_Download_Analysis.csv - Análisis profundo del contenido interno de archivos descargados</div>
                 <div class="file-item">📄 NEXUS_MASTER_LOG.txt - Log completo del escaneo</div>
             </div>
         </div>
@@ -4688,6 +6598,11 @@ function Start-NexusAntiCheat {
     Invoke-AlternateDataStreamScan
     Invoke-MemoryAnalysis
     Invoke-SystemModificationAnalysis
+    Invoke-JarAnalysis
+    Invoke-DisguisedAutoClickerDetection
+    Invoke-InvisibleWindowDetection
+    Invoke-DownloadHistoryAnalysis
+    Invoke-DeepDownloadedFileAnalysis
     
     # Análisis heurístico final
     $heuristicScore = Invoke-HeuristicAnalysis
