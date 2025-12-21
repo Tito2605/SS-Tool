@@ -41,7 +41,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $logFile = "$outputDir\NEXUS_MASTER_LOG.txt"
 $detections = @()
 $startTime = Get-Date
-$totalChecks = 22
+$totalChecks = 30
 $currentCheck = 0
 
 # Base de datos de firmas (expandida)
@@ -162,8 +162,71 @@ function Test-FileExtensionMismatch {
     return $null
 }
 
-# Base de datos de archivos conocidos de cheats
-$knownCheatFiles = @{
+# Lugares ocultos donde los hackers esconden cheats (conocimiento experto)
+$hiddenLocations = @{
+    SystemFolders = @(
+        "C:\Windows\Fonts",
+        "C:\Windows\Help",
+        "C:\Windows\Cursors",
+        "C:\Windows\Media",
+        "C:\Windows\Web\Wallpaper",
+        "C:\Windows\System32\spool",
+        "C:\Windows\System32\Tasks",
+        "C:\Windows\SysWOW64\config",
+        "C:\Windows\Logs",
+        "C:\Windows\ServiceProfiles",
+        "C:\PerfLogs"
+    )
+    
+    HiddenAppData = @(
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup",
+        "$env:APPDATA\Microsoft\Windows\SendTo",
+        "$env:APPDATA\Microsoft\Windows\Cookies",
+        "$env:LOCALAPPDATA\Microsoft\Windows\INetCache",
+        "$env:LOCALAPPDATA\Microsoft\Windows\WebCache",
+        "$env:LOCALAPPDATA\Microsoft\Windows\Explorer",
+        "$env:LOCALAPPDATA\Microsoft\CLR_v4.0",
+        "$env:LOCALAPPDATA\Microsoft\Feeds Cache"
+    )
+    
+    GameFolders = @(
+        "$env:LOCALAPPDATA\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe\LocalCache",
+        "$env:LOCALAPPDATA\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe\Settings",
+        "$env:LOCALAPPDATA\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe\SystemAppData",
+        "$env:LOCALAPPDATA\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe\TempState",
+        "$env:APPDATA\.minecraft\libraries",
+        "$env:APPDATA\.minecraft\logs",
+        "$env:APPDATA\.minecraft\crash-reports"
+    )
+    
+    CloudSync = @(
+        "$env:USERPROFILE\OneDrive",
+        "$env:USERPROFILE\Google Drive",
+        "$env:USERPROFILE\Dropbox",
+        "$env:USERPROFILE\iCloudDrive"
+    )
+    
+    Browsers = @(
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions",
+        "$env:APPDATA\Mozilla\Firefox\Profiles",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Extensions",
+        "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data"
+    )
+}
+
+# Extensiones alternativas usadas para ocultar (renombrado)
+$disguiseExtensions = @(
+    ".txt", ".log", ".dat", ".tmp", ".bak", ".old", ".cache", ".ini",
+    ".cfg", ".config", ".xml", ".json", ".db", ".sqlite", ".sys",
+    ".ttf", ".fon", ".cur", ".ani", ".wav", ".mp3", ".bmp", ".ico"
+)
+
+# Nombres genéricos comunes para ocultar
+$genericNames = @(
+    "svchost", "system", "windows", "microsoft", "update", "service", 
+    "runtime", "framework", "driver", "host", "helper", "launcher",
+    "config", "settings", "cache", "data", "temp", "log"
+)
     # Clients de Minecraft Bedrock
     Clients = @(
         @{Name="horion.dll"; Hash=""; ThreatLevel=100},
@@ -2477,6 +2540,1119 @@ function Invoke-FileForensicsAnalysis {
 }
 
 # ============================================
+# MÓDULO 24: ESCANEO DE UBICACIONES OCULTAS
+# ============================================
+
+function Invoke-HiddenLocationScan {
+    Update-Progress "Escaneando ubicaciones ocultas de expertos..."
+    Write-Log "`n=== MÓDULO 24: UBICACIONES OCULTAS ===" "Cyan"
+    
+    $hiddenFindings = @()
+    $totalScanned = 0
+    
+    Write-Log "Escaneando lugares donde los hackers esconden archivos..." "Yellow"
+    
+    # === CARPETAS DEL SISTEMA (RARO ENCONTRAR ARCHIVOS AQUÍ) ===
+    Write-Log "Fase 1: Carpetas del sistema (Fonts, Help, Cursors)..." "Gray"
+    
+    foreach ($folder in $hiddenLocations.SystemFolders) {
+        if (Test-Path $folder) {
+            $suspiciousFiles = Get-ChildItem -Path $folder -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Extension -in @(".exe", ".dll", ".jar", ".bat", ".ps1", ".vbs") -or
+                    ($_.Extension -in $disguiseExtensions -and $_.Length -gt 500KB)
+                } | Select-Object -First 20
+            
+            foreach ($file in $suspiciousFiles) {
+                $totalScanned++
+                $magic = Get-FileMagicBytes -Path $file.FullName
+                
+                Add-Detection "Ubicación Oculta - Sistema" `
+                    "$($file.Name) en ubicación inusual: $folder" `
+                    "CRITICAL" `
+                    $file.FullName `
+                    95
+                
+                $hiddenFindings += [PSCustomObject]@{
+                    Category = "System Folder"
+                    Location = $folder
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    Size = $file.Length
+                    Extension = $file.Extension
+                    MagicBytes = $magic
+                    Modified = $file.LastWriteTime
+                    ThreatLevel = 95
+                }
+            }
+        }
+    }
+    
+    # === APPDATA OCULTO ===
+    Write-Log "Fase 2: AppData oculto (Startup, SendTo, Cookies)..." "Gray"
+    
+    foreach ($folder in $hiddenLocations.HiddenAppData) {
+        if (Test-Path $folder) {
+            $files = Get-ChildItem -Path $folder -File -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Extension -in @(".exe", ".dll", ".jar", ".bat", ".scr") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-60)
+                } | Select-Object -First 20
+            
+            foreach ($file in $files) {
+                $totalScanned++
+                $signatures = Test-CheatSignature $file.Name
+                
+                if ($signatures.Count -gt 0 -or $file.Length -gt 1MB) {
+                    Add-Detection "Ubicación Oculta - AppData" `
+                        "$($file.Name) en AppData oculto" `
+                        "HIGH" `
+                        $file.FullName `
+                        85
+                    
+                    $hiddenFindings += [PSCustomObject]@{
+                        Category = "Hidden AppData"
+                        Location = $folder
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        ThreatLevel = 85
+                    }
+                }
+            }
+        }
+    }
+    
+    # === CARPETAS DE JUEGOS ===
+    Write-Log "Fase 3: Carpetas de Minecraft (LocalCache, Settings)..." "Gray"
+    
+    foreach ($folder in $hiddenLocations.GameFolders) {
+        if (Test-Path $folder) {
+            $files = Get-ChildItem -Path $folder -File -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Extension -in @(".exe", ".dll", ".jar") -and
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30)
+                } | Select-Object -First 30
+            
+            foreach ($file in $files) {
+                $totalScanned++
+                Add-Detection "Ubicación Oculta - Carpetas de Juego" `
+                    "$($file.Name) en carpeta de Minecraft" `
+                    "HIGH" `
+                    $file.FullName `
+                    80
+                
+                $hiddenFindings += [PSCustomObject]@{
+                    Category = "Game Folders"
+                    Location = $folder
+                    FileName = $file.Name
+                    Path = $file.FullName
+                    ThreatLevel = 80
+                }
+            }
+        }
+    }
+    
+    # === SINCRONIZACIÓN EN LA NUBE ===
+    Write-Log "Fase 4: Carpetas de sincronización (OneDrive, Google Drive)..." "Gray"
+    
+    foreach ($folder in $hiddenLocations.CloudSync) {
+        if (Test-Path $folder) {
+            $files = Get-ChildItem -Path $folder -Include "*.exe","*.dll","*.jar" -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-90) } |
+                Select-Object -First 30
+            
+            foreach ($file in $files) {
+                $totalScanned++
+                $signatures = Test-CheatSignature $file.Name
+                
+                if ($signatures.Count -gt 0) {
+                    Add-Detection "Ubicación Oculta - Nube" `
+                        "$($file.Name) sincronizado en la nube" `
+                        "HIGH" `
+                        $file.FullName `
+                        85
+                    
+                    $hiddenFindings += [PSCustomObject]@{
+                        Category = "Cloud Sync"
+                        Location = $folder
+                        FileName = $file.Name
+                        Path = $file.FullName
+                        ThreatLevel = 85
+                    }
+                }
+            }
+        }
+    }
+    
+    # === EXTENSIONES DE NAVEGADORES ===
+    Write-Log "Fase 5: Extensiones de navegadores (Chrome, Firefox)..." "Gray"
+    
+    foreach ($folder in $hiddenLocations.Browsers) {
+        if (Test-Path $folder) {
+            $files = Get-ChildItem -Path $folder -Include "*.exe","*.dll","*.js" -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                Select-Object -First 20
+            
+            foreach ($file in $files) {
+                $totalScanned++
+                if ($file.Extension -eq ".exe" -or ($file.Extension -eq ".dll" -and $file.Length -gt 500KB)) {
+                    Add-Detection "Ubicación Oculta - Navegador" `
+                        "$($file.Name) en carpeta de extensiones" `
+                        "MEDIUM" `
+                        $file.FullName `
+                        70
+                }
+            }
+        }
+    }
+    
+    $hiddenFindings | Export-Csv "$outputDir\23_Hidden_Locations.csv" -NoTypeInformation
+    Write-Log "Ubicaciones Ocultas: $totalScanned archivos en lugares sospechosos" "Green"
+}
+
+# ============================================
+# MÓDULO 25: DETECCIÓN DE ARCHIVOS DISFRAZADOS
+# ============================================
+
+function Invoke-DisguisedFileDetection {
+    Update-Progress "Detectando archivos disfrazados con nombres genéricos..."
+    Write-Log "`n=== MÓDULO 25: ARCHIVOS DISFRAZADOS ===" "Cyan"
+    
+    $disguisedFindings = @()
+    $totalScanned = 0
+    
+    Write-Log "Buscando ejecutables con nombres genéricos..." "Yellow"
+    
+    $searchPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA",
+        "$env:TEMP"
+    )
+    
+    # === NOMBRES GENÉRICOS SOSPECHOSOS ===
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            foreach ($genericName in $genericNames) {
+                $files = Get-ChildItem -Path $path -Filter "$genericName*" -Recurse -File -Force -ErrorAction SilentlyContinue |
+                    Where-Object { 
+                        $_.Extension -in @(".exe", ".dll", ".scr") -and
+                        $_.LastWriteTime -gt (Get-Date).AddDays(-60)
+                    } | Select-Object -First 10
+                
+                foreach ($file in $files) {
+                    $totalScanned++
+                    
+                    # Verificar si es archivo legítimo de Windows
+                    $isLegit = $file.Directory.FullName -like "C:\Windows\System32*" -or
+                               $file.Directory.FullName -like "C:\Windows\SysWOW64*"
+                    
+                    if (-not $isLegit) {
+                        Add-Detection "Archivo Disfrazado - Nombre Genérico" `
+                            "$($file.Name) usa nombre genérico de sistema" `
+                            "HIGH" `
+                            $file.FullName `
+                            80
+                        
+                        $disguisedFindings += [PSCustomObject]@{
+                            Category = "Generic Name"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            GenericPattern = $genericName
+                            Size = $file.Length
+                            Modified = $file.LastWriteTime
+                            ThreatLevel = 80
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # === EXTENSIONES DISFRAZADAS ===
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            foreach ($fakeExt in $disguiseExtensions) {
+                $files = Get-ChildItem -Path $path -Filter "*$fakeExt" -Recurse -File -Force -ErrorAction SilentlyContinue |
+                    Where-Object { 
+                        $_.Length -gt 500KB -and
+                        $_.LastWriteTime -gt (Get-Date).AddDays(-60)
+                    } | Select-Object -First 20
+                
+                foreach ($file in $files) {
+                    $totalScanned++
+                    $magic = Get-FileMagicBytes -Path $file.FullName
+                    
+                    # Si es ejecutable con extensión falsa
+                    if ($magic -like "4D5A*") {
+                        Add-Detection "Archivo Disfrazado - Extensión Falsa" `
+                            "$($file.Name) es ejecutable con extensión $fakeExt" `
+                            "CRITICAL" `
+                            $file.FullName `
+                            95
+                        
+                        $disguisedFindings += [PSCustomObject]@{
+                            Category = "Fake Extension"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            FakeExtension = $fakeExt
+                            RealType = "Executable"
+                            MagicBytes = $magic
+                            ThreatLevel = 95
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    $disguisedFindings | Export-Csv "$outputDir\24_Disguised_Files.csv" -NoTypeInformation
+    Write-Log "Archivos Disfrazados: $($disguisedFindings.Count) detectados" "Green"
+}
+
+# ============================================
+# MÓDULO 26: ANÁLISIS DE CERTIFICADOS DIGITALES
+# ============================================
+
+function Invoke-CertificateAnalysis {
+    Update-Progress "Analizando certificados digitales..."
+    Write-Log "`n=== MÓDULO 26: CERTIFICADOS DIGITALES ===" "Cyan"
+    
+    $certFindings = @()
+    $totalScanned = 0
+    
+    Write-Log "Verificando firmas digitales de ejecutables..." "Yellow"
+    
+    $searchPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents"
+    )
+    
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            $exeFiles = Get-ChildItem -Path $path -Include "*.exe","*.dll" -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-60) } |
+                Select-Object -First 50
+            
+            foreach ($file in $exeFiles) {
+                $totalScanned++
+                
+                try {
+                    $sig = Get-AuthenticodeSignature $file.FullName -ErrorAction SilentlyContinue
+                    
+                    if ($sig) {
+                        # Sin firma
+                        if ($sig.Status -eq "NotSigned" -and $file.Length -gt 100KB) {
+                            Add-Detection "Certificado - Sin Firma Digital" `
+                                "$($file.Name) no está firmado digitalmente" `
+                                "MEDIUM" `
+                                $file.FullName `
+                                65
+                            
+                            $certFindings += [PSCustomObject]@{
+                                FileName = $file.Name
+                                Path = $file.FullName
+                                Status = "Not Signed"
+                                ThreatLevel = 65
+                            }
+                        }
+                        
+                        # Firma inválida
+                        elseif ($sig.Status -in @("Invalid", "HashMismatch", "NotTrusted")) {
+                            Add-Detection "Certificado - Firma Inválida" `
+                                "$($file.Name) - Estado: $($sig.Status)" `
+                                "HIGH" `
+                                $file.FullName `
+                                85
+                            
+                            $certFindings += [PSCustomObject]@{
+                                FileName = $file.Name
+                                Path = $file.FullName
+                                Status = $sig.Status
+                                Signer = $sig.SignerCertificate.Subject
+                                ThreatLevel = 85
+                            }
+                        }
+                        
+                        # Certificado expirado
+                        elseif ($sig.Status -eq "Valid" -and $sig.SignerCertificate) {
+                            if ($sig.SignerCertificate.NotAfter -lt (Get-Date)) {
+                                Add-Detection "Certificado - Certificado Expirado" `
+                                    "$($file.Name) - Expirado: $($sig.SignerCertificate.NotAfter)" `
+                                    "MEDIUM" `
+                                    $file.FullName `
+                                    60
+                            }
+                        }
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    $certFindings | Export-Csv "$outputDir\25_Certificates.csv" -NoTypeInformation
+    Write-Log "Certificados: $totalScanned archivos verificados" "Green"
+}
+
+# ============================================
+# MÓDULO 27: DETECCIÓN DE CONEXIONES C2
+# ============================================
+
+function Invoke-C2Detection {
+    Update-Progress "Detectando conexiones a servidores C2..."
+    Write-Log "`n=== MÓDULO 27: DETECCIÓN DE SERVIDORES C2 ===" "Cyan"
+    
+    $c2Findings = @()
+    
+    Write-Log "Analizando conexiones de red sospechosas..." "Yellow"
+    
+    # IPs/dominios sospechosos conocidos
+    $suspiciousIPs = @(
+        "185.193.126", "45.142.212", "193.239.85", "104.21.0", "172.67.0"
+    )
+    
+    $suspiciousDomains = @(
+        "pastebin.com", "hastebin.com", "discord.gg", "bit.ly", 
+        "tinyurl.com", "raw.githubusercontent.com"
+    )
+    
+    # Conexiones activas
+    $connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue
+    
+    foreach ($conn in $connections) {
+        $remoteIP = $conn.RemoteAddress
+        $remotePort = $conn.RemotePort
+        
+        try {
+            $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+            
+            if ($proc) {
+                # Verificar IPs sospechosas
+                $isSuspicious = $false
+                foreach ($suspIP in $suspiciousIPs) {
+                    if ($remoteIP -like "$suspIP*") {
+                        $isSuspicious = $true
+                        break
+                    }
+                }
+                
+                # Puertos sospechosos (no comunes)
+                $suspiciousPorts = @(4444, 5555, 6666, 7777, 8888, 9999, 1337, 31337)
+                if ($remotePort -in $suspiciousPorts) {
+                    $isSuspicious = $true
+                }
+                
+                if ($isSuspicious) {
+                    Add-Detection "C2 - Conexión Sospechosa" `
+                        "$($proc.Name) conectado a $remoteIP`:$remotePort" `
+                        "HIGH" `
+                        $proc.Path `
+                        80
+                    
+                    $c2Findings += [PSCustomObject]@{
+                        Process = $proc.Name
+                        PID = $proc.Id
+                        RemoteIP = $remoteIP
+                        RemotePort = $remotePort
+                        ThreatLevel = 80
+                    }
+                }
+            }
+        } catch {}
+    }
+    
+    # DNS Cache
+    try {
+        $dnsCache = Get-DnsClientCache -ErrorAction SilentlyContinue
+        foreach ($entry in $dnsCache) {
+            foreach ($domain in $suspiciousDomains) {
+                if ($entry.Entry -like "*$domain*") {
+                    Add-Detection "C2 - Dominio Sospechoso en DNS" `
+                        "Acceso a: $($entry.Entry)" `
+                        "MEDIUM" `
+                        "DNS Cache" `
+                        65
+                }
+            }
+        }
+    } catch {}
+    
+    $c2Findings | Export-Csv "$outputDir\26_C2_Connections.csv" -NoTypeInformation
+    Write-Log "C2: $($c2Findings.Count) conexiones sospechosas" "Green"
+}
+
+# ============================================
+# MÓDULO 28: ANÁLISIS DE STREAMS ALTERNATIVOS (ADS)
+# ============================================
+
+function Invoke-AlternateDataStreamScan {
+    Update-Progress "Escaneando Alternate Data Streams..."
+    Write-Log "`n=== MÓDULO 28: ALTERNATE DATA STREAMS (ADS) ===" "Cyan"
+    
+    $adsFindings = @()
+    $totalScanned = 0
+    
+    Write-Log "Detectando archivos ocultos en ADS (técnica avanzada)..." "Yellow"
+    
+    $searchPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents"
+    )
+    
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            $files = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-60) } |
+                Select-Object -First 100
+            
+            foreach ($file in $files) {
+                $totalScanned++
+                
+                try {
+                    # Buscar streams alternativos
+                    $streams = Get-Item $file.FullName -Stream * -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Stream -ne ':$DATA' }
+                    
+                    if ($streams) {
+                        foreach ($stream in $streams) {
+                            if ($stream.Length -gt 1KB) {
+                                Add-Detection "ADS - Stream Alternativo Detectado" `
+                                    "$($file.Name) tiene stream oculto: $($stream.Stream) ($($stream.Length) bytes)" `
+                                    "HIGH" `
+                                    $file.FullName `
+                                    85
+                                
+                                $adsFindings += [PSCustomObject]@{
+                                    FileName = $file.Name
+                                    Path = $file.FullName
+                                    StreamName = $stream.Stream
+                                    StreamSize = $stream.Length
+                                    ThreatLevel = 85
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+        }
+    }
+    
+    $adsFindings | Export-Csv "$outputDir\27_ADS_Streams.csv" -NoTypeInformation
+    Write-Log "ADS: $($adsFindings.Count) streams alternativos detectados" "Green"
+}
+
+# ============================================
+# MÓDULO 29: ANÁLISIS DE MEMORIA Y HOOKS
+# ============================================
+
+function Invoke-MemoryAnalysis {
+    Update-Progress "Analizando memoria y hooks del sistema..."
+    Write-Log "`n=== MÓDULO 29: ANÁLISIS DE MEMORIA ===" "Cyan"
+    
+    $memoryFindings = @()
+    
+    Write-Log "Detectando hooks y modificaciones en memoria..." "Yellow"
+    
+    # Procesos con alto uso de memoria (posibles inyecciones)
+    $processes = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.WorkingSet64 -gt 500MB } |
+        Sort-Object WorkingSet64 -Descending |
+        Select-Object -First 20
+    
+    foreach ($proc in $processes) {
+        $signatures = Test-CheatSignature $proc.Name
+        
+        if ($signatures.Count -gt 0) {
+            $memMB = [math]::Round($proc.WorkingSet64 / 1MB, 2)
+            
+            Add-Detection "Memoria - Proceso Sospechoso Alto Consumo" `
+                "$($proc.Name) usando $memMB MB" `
+                "MEDIUM" `
+                $proc.Path `
+                70
+            
+            $memoryFindings += [PSCustomObject]@{
+                Process = $proc.Name
+                PID = $proc.Id
+                MemoryMB = $memMB
+                Threads = $proc.Threads.Count
+                ThreatLevel = 70
+            }
+        }
+    }
+    
+    # Detectar handles sospechosos
+    $mcProcesses = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "Minecraft" }
+    
+    foreach ($mcProc in $mcProcesses) {
+        try {
+            $handles = $mcProc.Handles
+            if ($handles -gt 10000) {
+                Add-Detection "Memoria - Exceso de Handles" `
+                    "Minecraft tiene $handles handles (posible hook/inyección)" `
+                    "MEDIUM" `
+                    $mcProc.Path `
+                    65
+            }
+        } catch {}
+    }
+    
+    $memoryFindings | Export-Csv "$outputDir\28_Memory_Analysis.csv" -NoTypeInformation
+    Write-Log "Memoria: $($memoryFindings.Count) anomalías detectadas" "Green"
+}
+
+# ============================================
+# MÓDULO 30: ANÁLISIS DE MODIFICACIONES DEL SISTEMA
+# ============================================
+
+function Invoke-SystemModificationAnalysis {
+    Update-Progress "Detectando modificaciones del sistema..."
+    Write-Log "`n=== MÓDULO 30: MODIFICACIONES DEL SISTEMA ===" "Cyan"
+    
+    $sysModFindings = @()
+    
+    Write-Log "Analizando modificaciones críticas del sistema..." "Yellow"
+    
+    # === HOSTS FILE ===
+    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
+    if (Test-Path $hostsFile) {
+        $hostsContent = Get-Content $hostsFile -ErrorAction SilentlyContinue
+        $suspiciousEntries = $hostsContent | Where-Object { 
+            $_ -notmatch "^#" -and $_ -match "(minecraft|mojang|microsoft|xbox|live)" 
+        }
+        
+        if ($suspiciousEntries) {
+            Add-Detection "Sistema - Archivo HOSTS Modificado" `
+                "$($suspiciousEntries.Count) entradas sospechosas en hosts" `
+                "HIGH" `
+                $hostsFile `
+                85
+            
+            $sysModFindings += [PSCustomObject]@{
+                Type = "Hosts File"
+                Modifications = ($suspiciousEntries -join " | ")
+                ThreatLevel = 85
+            }
+        }
+    }
+    
+    # === FIREWALL RULES ===
+    try {
+        $fwRules = Get-NetFirewallRule -ErrorAction SilentlyContinue |
+            Where-Object { $_.Enabled -eq $true -and $_.Direction -eq "Outbound" }
+        
+        foreach ($rule in $fwRules) {
+            $signatures = Test-CheatSignature $rule.Name
+            if ($signatures.Count -gt 0) {
+                Add-Detection "Sistema - Regla de Firewall Sospechosa" `
+                    $rule.Name `
+                    "MEDIUM" `
+                    "Firewall" `
+                    60
+            }
+        }
+    } catch {}
+    
+    # === PROXY SETTINGS ===
+    $proxyReg = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    if (Test-Path $proxyReg) {
+        $proxy = Get-ItemProperty -Path $proxyReg -ErrorAction SilentlyContinue
+        if ($proxy.ProxyEnable -eq 1) {
+            Add-Detection "Sistema - Proxy Habilitado" `
+                "Proxy: $($proxy.ProxyServer)" `
+                "MEDIUM" `
+                $proxyReg `
+                60
+        }
+    }
+    
+    # === WINDOWS DEFENDER ===
+    try {
+        $defender = Get-MpPreference -ErrorAction SilentlyContinue
+        if ($defender.DisableRealtimeMonitoring -eq $true) {
+            Add-Detection "Sistema - Windows Defender Deshabilitado" `
+                "Real-time protection está deshabilitado" `
+                "CRITICAL" `
+                "Windows Defender" `
+                95
+        }
+        
+        if ($defender.ExclusionPath) {
+            foreach ($exclusion in $defender.ExclusionPath) {
+                if ($exclusion -match "(Downloads|Desktop|Documents|Temp)") {
+                    Add-Detection "Sistema - Exclusión de Defender Sospechosa" `
+                        "Ruta excluida: $exclusion" `
+                        "HIGH" `
+                        "Windows Defender" `
+                        80
+                }
+            }
+        }
+    } catch {}
+    
+    $sysModFindings | Export-Csv "$outputDir\29_System_Modifications.csv" -NoTypeInformation
+    Write-Log "Modificaciones del Sistema: $($sysModFindings.Count) detectadas" "Green"
+}
+
+# ============================================
+# MÓDULO 23: ANÁLISIS PROFUNDO DE STRINGS Y OFUSCACIÓN
+# ============================================
+
+function Invoke-DeepStringAnalysis {
+    Update-Progress "Analizando strings y detectando ofuscación..."
+    Write-Log "`n=== MÓDULO 23: ANÁLISIS DE STRINGS Y OFUSCACIÓN ===" "Cyan"
+    
+    $stringFindings = @()
+    $totalAnalyzed = 0
+    
+    Write-Log "Iniciando análisis profundo de strings en ejecutables..." "Yellow"
+    
+    # Palabras clave sospechosas para buscar dentro de archivos
+    $suspiciousStrings = @{
+        CheatFunctions = @(
+            "killaura", "bhop", "fly", "xray", "reach", "velocity", "antiknockback",
+            "scaffold", "freecam", "esp", "aimbot", "triggerbot", "autoclicker",
+            "inject", "hook", "detour", "patch", "bypass", "loader"
+        )
+        
+        ClientNames = @(
+            "horion", "onix", "zephyr", "packet", "crystal", "element", "toolbox",
+            "ambrosial", "lakeside", "nitr0", "koid"
+        )
+        
+        APICalls = @(
+            "VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "LoadLibrary",
+            "GetProcAddress", "OpenProcess", "ReadProcessMemory", "VirtualProtect",
+            "SetWindowsHookEx", "GetAsyncKeyState", "mouse_event", "keybd_event"
+        )
+        
+        Obfuscation = @(
+            "base64", "decrypt", "deobfuscate", "unpack", "rc4", "xor", "aes",
+            "cipher", "encode", "obfuscate", "scramble"
+        )
+        
+        AntiDebug = @(
+            "IsDebuggerPresent", "CheckRemoteDebugger", "NtQueryInformationProcess",
+            "OutputDebugString", "debugger", "anti-debug", "anti_debug"
+        )
+        
+        Minecraft = @(
+            "minecraft", "mojang", "bedrock", "renderdragon", "level.dat",
+            "behavior_pack", "resource_pack", "MinecraftUWP"
+        )
+    }
+    
+    # Carpetas a analizar
+    $scanPaths = @(
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:APPDATA",
+        "$env:LOCALAPPDATA\Temp",
+        "$env:TEMP"
+    )
+    
+    # ===== FASE 1: EXTRACCIÓN Y ANÁLISIS DE STRINGS =====
+    Write-Log "Fase 1: Extrayendo strings de archivos ejecutables..." "Gray"
+    
+    foreach ($path in $scanPaths) {
+        if (Test-Path $path) {
+            $executableFiles = Get-ChildItem -Path $path -Include "*.exe","*.dll","*.jar" -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-60) -and 
+                    $_.Length -gt 10KB -and $_.Length -lt 50MB
+                } | Select-Object -First 30
+            
+            foreach ($file in $executableFiles) {
+                $totalAnalyzed++
+                
+                try {
+                    # Leer contenido como bytes
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                    
+                    # Convertir a string para búsqueda de patrones
+                    $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                    
+                    $detectedStrings = @()
+                    $threatScore = 0
+                    
+                    # Buscar cada categoría de strings
+                    foreach ($category in $suspiciousStrings.Keys) {
+                        foreach ($keyword in $suspiciousStrings[$category]) {
+                            if ($content -match $keyword) {
+                                $detectedStrings += "$category : $keyword"
+                                
+                                # Calcular threat score
+                                $threatScore += switch ($category) {
+                                    "CheatFunctions" { 20 }
+                                    "ClientNames" { 30 }
+                                    "APICalls" { 15 }
+                                    "Obfuscation" { 10 }
+                                    "AntiDebug" { 25 }
+                                    "Minecraft" { 5 }
+                                    default { 5 }
+                                }
+                            }
+                        }
+                    }
+                    
+                    # Si se encontraron strings sospechosos
+                    if ($detectedStrings.Count -gt 0) {
+                        $severity = if ($threatScore -ge 80) { "CRITICAL" }
+                                   elseif ($threatScore -ge 50) { "HIGH" }
+                                   elseif ($threatScore -ge 30) { "MEDIUM" }
+                                   else { "LOW" }
+                        
+                        Add-Detection "Strings - Contenido Sospechoso Detectado" `
+                            "$($file.Name) contiene $($detectedStrings.Count) strings sospechosos" `
+                            $severity `
+                            $file.FullName `
+                            $threatScore
+                        
+                        $stringFindings += [PSCustomObject]@{
+                            Category = "Suspicious Strings"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Size = $file.Length
+                            DetectedStrings = ($detectedStrings -join " | ")
+                            StringCount = $detectedStrings.Count
+                            ThreatScore = $threatScore
+                            Hash = Get-FileHash-Safe $file.FullName
+                        }
+                    }
+                    
+                } catch {
+                    Write-Log "Error analizando $($file.Name): $($_.Exception.Message)" "Yellow"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 2: DETECCIÓN DE OFUSCACIÓN =====
+    Write-Log "Fase 2: Detectando técnicas de ofuscación..." "Gray"
+    
+    foreach ($path in $scanPaths) {
+        if (Test-Path $path) {
+            $files = Get-ChildItem -Path $path -Include "*.exe","*.dll" -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { 
+                    $_.LastWriteTime -gt (Get-Date).AddDays(-30) -and 
+                    $_.Length -gt 50KB -and $_.Length -lt 20MB
+                } | Select-Object -First 20
+            
+            foreach ($file in $files) {
+                $totalAnalyzed++
+                
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                    
+                    # === TÉCNICA 1: Detectar alto porcentaje de bytes nulos (padding) ===
+                    $nullBytes = ($bytes | Where-Object { $_ -eq 0 }).Count
+                    $nullPercentage = ($nullBytes / $bytes.Length) * 100
+                    
+                    if ($nullPercentage -gt 60) {
+                        Add-Detection "Ofuscación - Alto Contenido de Padding" `
+                            "$($file.Name) - $([math]::Round($nullPercentage, 1))% bytes nulos (padding sospechoso)" `
+                            "MEDIUM" `
+                            $file.FullName `
+                            70
+                        
+                        $stringFindings += [PSCustomObject]@{
+                            Category = "Obfuscation - Padding"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            NullPercentage = [math]::Round($nullPercentage, 1)
+                            ThreatScore = 70
+                            Reason = "Exceso de bytes nulos (posible evasión)"
+                        }
+                    }
+                    
+                    # === TÉCNICA 2: Detectar secciones con alta entropía (cifrado) ===
+                    if ($bytes.Length -gt 1024) {
+                        # Analizar en bloques de 1KB
+                        $blockSize = 1024
+                        $highEntropyBlocks = 0
+                        
+                        for ($i = 0; $i -lt $bytes.Length - $blockSize; $i += $blockSize) {
+                            $block = $bytes[$i..($i + $blockSize - 1)]
+                            $uniqueBytes = ($block | Group-Object | Measure-Object).Count
+                            $entropy = $uniqueBytes / 256.0
+                            
+                            if ($entropy -gt 0.95) {
+                                $highEntropyBlocks++
+                            }
+                        }
+                        
+                        $totalBlocks = [math]::Floor($bytes.Length / $blockSize)
+                        $highEntropyPercentage = ($highEntropyBlocks / $totalBlocks) * 100
+                        
+                        if ($highEntropyPercentage -gt 40) {
+                            Add-Detection "Ofuscación - Contenido Cifrado/Comprimido" `
+                                "$($file.Name) - $([math]::Round($highEntropyPercentage, 1))% bloques con alta entropía" `
+                                "HIGH" `
+                                $file.FullName `
+                                80
+                            
+                            $stringFindings += [PSCustomObject]@{
+                                Category = "Obfuscation - Encryption"
+                                FileName = $file.Name
+                                Path = $file.FullName
+                                HighEntropyPercentage = [math]::Round($highEntropyPercentage, 1)
+                                ThreatScore = 80
+                                Reason = "Contenido posiblemente cifrado"
+                            }
+                        }
+                    }
+                    
+                    # === TÉCNICA 3: Detectar strings codificados en Base64 ===
+                    $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                    $base64Pattern = '[A-Za-z0-9+/]{40,}={0,2}'
+                    $base64Matches = [regex]::Matches($content, $base64Pattern)
+                    
+                    if ($base64Matches.Count -gt 10) {
+                        Add-Detection "Ofuscación - Múltiples Strings Base64" `
+                            "$($file.Name) - $($base64Matches.Count) strings Base64 detectados" `
+                            "MEDIUM" `
+                            $file.FullName `
+                            65
+                        
+                        $stringFindings += [PSCustomObject]@{
+                            Category = "Obfuscation - Base64"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Base64Count = $base64Matches.Count
+                            ThreatScore = 65
+                            Reason = "Múltiples strings codificados en Base64"
+                        }
+                    }
+                    
+                    # === TÉCNICA 4: Detectar ausencia de strings legibles (packed) ===
+                    $readableStrings = [regex]::Matches($content, '[\x20-\x7E]{8,}')
+                    $readablePercentage = ($readableStrings.Count / ($bytes.Length / 100)) * 100
+                    
+                    if ($readablePercentage -lt 5 -and $bytes.Length -gt 100KB) {
+                        Add-Detection "Ofuscación - Archivo Empaquetado (Packed)" `
+                            "$($file.Name) - Muy pocos strings legibles ($([math]::Round($readablePercentage, 2))%)" `
+                            "HIGH" `
+                            $file.FullName `
+                            85
+                        
+                        $stringFindings += [PSCustomObject]@{
+                            Category = "Obfuscation - Packed"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            ReadablePercentage = [math]::Round($readablePercentage, 2)
+                            ThreatScore = 85
+                            Reason = "Archivo empaquetado o comprimido (UPX, etc.)"
+                        }
+                    }
+                    
+                } catch {
+                    Write-Log "Error en análisis de ofuscación de $($file.Name)" "Yellow"
+                }
+            }
+        }
+    }
+    
+    # ===== FASE 3: ANÁLISIS DE IMPORTS (API CALLS SOSPECHOSAS) =====
+    Write-Log "Fase 3: Analizando imports de Windows API..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $exeFiles = Get-ChildItem -Path $path -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                Select-Object -First 20
+            
+            foreach ($file in $exeFiles) {
+                $totalAnalyzed++
+                
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                    $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                    
+                    # APIs peligrosas de inyección
+                    $dangerousAPIs = @(
+                        "VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread",
+                        "NtCreateThreadEx", "RtlCreateUserThread", "SetWindowsHookEx",
+                        "GetAsyncKeyState", "SetThreadContext", "QueueUserAPC"
+                    )
+                    
+                    $detectedAPIs = @()
+                    foreach ($api in $dangerousAPIs) {
+                        if ($content -match $api) {
+                            $detectedAPIs += $api
+                        }
+                    }
+                    
+                    if ($detectedAPIs.Count -ge 3) {
+                        Add-Detection "Strings - APIs de Inyección Detectadas" `
+                            "$($file.Name) usa $($detectedAPIs.Count) APIs de inyección: $($detectedAPIs -join ', ')" `
+                            "CRITICAL" `
+                            $file.FullName `
+                            95
+                        
+                        $stringFindings += [PSCustomObject]@{
+                            Category = "Dangerous APIs"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            APIs = ($detectedAPIs -join ", ")
+                            APICount = $detectedAPIs.Count
+                            ThreatScore = 95
+                            Reason = "Múltiples APIs de inyección/hooking"
+                        }
+                    }
+                    
+                } catch {}
+            }
+        }
+    }
+    
+    # ===== FASE 4: DETECCIÓN DE ANTI-ANÁLISIS =====
+    Write-Log "Fase 4: Detectando técnicas anti-análisis y anti-debug..." "Gray"
+    
+    foreach ($path in $scanPaths) {
+        if (Test-Path $path) {
+            $files = Get-ChildItem -Path $path -Include "*.exe","*.dll" -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                Select-Object -First 15
+            
+            foreach ($file in $files) {
+                $totalAnalyzed++
+                
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                    $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                    
+                    $antiAnalysisTechniques = @()
+                    
+                    # Técnicas anti-debug
+                    if ($content -match "IsDebuggerPresent") { $antiAnalysisTechniques += "IsDebuggerPresent" }
+                    if ($content -match "CheckRemoteDebugger") { $antiAnalysisTechniques += "CheckRemoteDebugger" }
+                    if ($content -match "NtQueryInformationProcess") { $antiAnalysisTechniques += "NtQueryInformationProcess" }
+                    if ($content -match "OutputDebugString") { $antiAnalysisTechniques += "OutputDebugString" }
+                    
+                    # Técnicas anti-VM
+                    if ($content -match "VirtualBox|VMware|QEMU|Xen") { $antiAnalysisTechniques += "VM Detection" }
+                    
+                    # Técnicas anti-sandbox
+                    if ($content -match "Sleep|GetTickCount|QueryPerformanceCounter") {
+                        # Verificar si hay múltiples llamadas (técnica de evasión temporal)
+                        $sleepCount = ([regex]::Matches($content, "Sleep")).Count
+                        if ($sleepCount -gt 5) {
+                            $antiAnalysisTechniques += "Time-based Evasion"
+                        }
+                    }
+                    
+                    if ($antiAnalysisTechniques.Count -gt 0) {
+                        Add-Detection "Anti-Análisis - Técnicas de Evasión Detectadas" `
+                            "$($file.Name) - $($antiAnalysisTechniques.Count) técnicas: $($antiAnalysisTechniques -join ', ')" `
+                            "HIGH" `
+                            $file.FullName `
+                            85
+                        
+                        $stringFindings += [PSCustomObject]@{
+                            Category = "Anti-Analysis"
+                            FileName = $file.Name
+                            Path = $file.FullName
+                            Techniques = ($antiAnalysisTechniques -join ", ")
+                            TechniqueCount = $antiAnalysisTechniques.Count
+                            ThreatScore = 85
+                            Reason = "Contiene técnicas anti-debug/anti-VM"
+                        }
+                    }
+                    
+                } catch {}
+            }
+        }
+    }
+    
+    # ===== FASE 5: ANÁLISIS DE SECCIONES PE (EJECUTABLES) =====
+    Write-Log "Fase 5: Analizando estructura PE de ejecutables..." "Gray"
+    
+    foreach ($path in @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop")) {
+        if (Test-Path $path) {
+            $exeFiles = Get-ChildItem -Path $path -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue -Force |
+                Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                Select-Object -First 15
+            
+            foreach ($file in $exeFiles) {
+                $totalAnalyzed++
+                
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                    
+                    # Verificar si es PE válido (MZ header)
+                    if ($bytes.Length -gt 64 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
+                        
+                        # Buscar secciones sospechosas
+                        $content = [System.Text.Encoding]::ASCII.GetString($bytes)
+                        
+                        # Nombres de secciones comunes en packers/malware
+                        $suspiciousSections = @(".upx", ".pack", ".crypted", ".enigma", ".aspack", ".petite")
+                        
+                        foreach ($section in $suspiciousSections) {
+                            if ($content -match [regex]::Escape($section)) {
+                                Add-Detection "PE Analysis - Sección Sospechosa" `
+                                    "$($file.Name) contiene sección '$section' (posible packer)" `
+                                    "HIGH" `
+                                    $file.FullName `
+                                    80
+                                
+                                $stringFindings += [PSCustomObject]@{
+                                    Category = "PE Structure"
+                                    FileName = $file.Name
+                                    Path = $file.FullName
+                                    SuspiciousSection = $section
+                                    ThreatScore = 80
+                                    Reason = "Sección PE indica uso de packer/crypter"
+                                }
+                                break
+                            }
+                        }
+                        
+                        # Detectar ejecutables sin imports (muy sospechoso)
+                        $hasImports = $content -match "kernel32|user32|ntdll|advapi32"
+                        if (-not $hasImports -and $bytes.Length -gt 50KB) {
+                            Add-Detection "PE Analysis - Sin Imports" `
+                                "$($file.Name) no tiene imports estándar (posible packed/cifrado)" `
+                                "HIGH" `
+                                $file.FullName `
+                                85
+                        }
+                    }
+                    
+                } catch {}
+            }
+        }
+    }
+    
+    # Exportar resultados
+    $stringFindings | Export-Csv "$outputDir\22_String_Analysis.csv" -NoTypeInformation
+    Write-Log "Análisis de Strings: $totalAnalyzed archivos analizados, $($stringFindings.Count) hallazgos" "Green"
+    
+    # Estadísticas
+    if ($stringFindings.Count -gt 0) {
+        Write-Log "`nHallazgos por categoría:" "Cyan"
+        $stringFindings | Group-Object Category | Sort-Object Count -Descending | ForEach-Object {
+            Write-Log "  - $($_.Name): $($_.Count)" "Gray"
+        }
+        
+        # Top archivos más sospechosos
+        $topThreats = $stringFindings | Sort-Object ThreatScore -Descending | Select-Object -First 5
+        if ($topThreats.Count -gt 0) {
+            Write-Log "`nTop 5 archivos más sospechosos:" "Red"
+            foreach ($threat in $topThreats) {
+                Write-Log "  - $($threat.FileName) (Score: $($threat.ThreatScore))" "Red"
+            }
+        }
+    }
+}
+
+# ============================================
 # MÓDULO 20: ANÁLISIS HEURÍSTICO AVANZADO
 # ============================================================================
 
@@ -3439,6 +4615,14 @@ function New-HTMLReport {
                 <div class="file-item">📄 19_Heuristic.csv - Análisis heurístico</div>
                 <div class="file-item">📄 20_Advanced_File_Detection.csv - Detección avanzada de archivos</div>
                 <div class="file-item">📄 21_File_Forensics.csv - Análisis forense (extensiones falsas, archivos vaciados)</div>
+                <div class="file-item">📄 22_String_Analysis.csv - Análisis de strings, ofuscación, APIs peligrosas</div>
+                <div class="file-item">📄 23_Hidden_Locations.csv - Ubicaciones ocultas del sistema</div>
+                <div class="file-item">📄 24_Disguised_Files.csv - Archivos disfrazados con nombres genéricos</div>
+                <div class="file-item">📄 25_Certificates.csv - Análisis de certificados digitales</div>
+                <div class="file-item">📄 26_C2_Connections.csv - Detección de servidores C2</div>
+                <div class="file-item">📄 27_ADS_Streams.csv - Alternate Data Streams</div>
+                <div class="file-item">📄 28_Memory_Analysis.csv - Análisis de memoria y hooks</div>
+                <div class="file-item">📄 29_System_Modifications.csv - Modificaciones del sistema</div>
                 <div class="file-item">📄 NEXUS_MASTER_LOG.txt - Log completo del escaneo</div>
             </div>
         </div>
@@ -3496,6 +4680,14 @@ function Start-NexusAntiCheat {
     Invoke-EventLogAnalysis
     Invoke-AdvancedFileDetection
     Invoke-FileForensicsAnalysis
+    Invoke-DeepStringAnalysis
+    Invoke-HiddenLocationScan
+    Invoke-DisguisedFileDetection
+    Invoke-CertificateAnalysis
+    Invoke-C2Detection
+    Invoke-AlternateDataStreamScan
+    Invoke-MemoryAnalysis
+    Invoke-SystemModificationAnalysis
     
     # Análisis heurístico final
     $heuristicScore = Invoke-HeuristicAnalysis
