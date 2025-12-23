@@ -108,10 +108,12 @@ function Get-FileMagicBytes {
     param([string]$Path, [int]$ByteCount = 8)
     
     try {
+        if (-not (Test-Path $Path)) { return $null }
         $bytes = [System.IO.File]::ReadAllBytes($Path)
         if ($bytes.Length -eq 0) { return "EMPTY" }
         
-        $magicBytes = $bytes[0..[Math]::Min($ByteCount - 1, $bytes.Length - 1)]
+        $maxBytes = [Math]::Min($ByteCount - 1, $bytes.Length - 1)
+        $magicBytes = $bytes[0..$maxBytes]
         $hex = ($magicBytes | ForEach-Object { $_.ToString("X2") }) -join ""
         return $hex
     } catch {
