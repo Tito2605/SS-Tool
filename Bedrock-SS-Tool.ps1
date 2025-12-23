@@ -47,10 +47,10 @@ $currentCheck = 0
 # Base de datos de firmas (expandida)
 $cheatSignatures = @{
     Clients = @(
-        "horion", "onix", "zephyr", "packet", "crystal", "ambrosial", "lakeside",
+        "horion", "packet", "crystal", "ambrosial", "lakeside",
         "nitr0", "nitro", "koid", "dream", "toolbox", "element", "rise", "fdp", "liquid",
         "azura", "flux", "vertex", "phantom", "ghost", "spectre", "venom", "toxic",
-        "filess", "entropy", "vape", "astolfo", "sigma", "wurst", "meteor"
+        "filess", "entropy", "vape", "astolfo", "sigma", "wurst", "meteor", "zephyr"
     )
     
     Injectors = @(
@@ -65,7 +65,15 @@ $cheatSignatures = @{
         "nuker", "fastbreak", "autoarmor", "autoclicker", "aimbot", "triggerbot",
         "antifall", "nofall", "timer", "fastbow", "criticals", "step", "jesus",
         "derp", "blink", "phase", "noslowdown", "antiblind", "fullbright",
-        "autoclick", "leftclick", "rightclick", "doubleclick", "clickassist"
+        "autoclick", "leftclick", "rightclick", "doubleclick", "clickassist",
+        "butterfly", "jitter", "drag", "godbridging", "breezily", "moonwalk"
+    )
+    
+    AutoClickers = @(
+        "autoclick", "autoclicker", "clickassist", "leftclick", "rightclick",
+        "doubleclick", "clickbot", "mouseclick", "clickmacro", "clickrecord",
+        "butterfly", "jitter", "drag", "cps", "opclick", "ghostclick",
+        "breezily", "moonwalk", "godbridging", "wtap", "stap"
     )
     
     Tools = @(
