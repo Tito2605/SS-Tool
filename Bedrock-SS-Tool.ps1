@@ -290,8 +290,7 @@ $genericNames = @(
         @{Name="WiseFolderHider.exe"; Hash=""; ThreatLevel=85},
         @{Name="IObitUnlocker.exe"; Hash=""; ThreatLevel=70}
     )
-}
-
+)
 # ============================================
 # FUNCIONES AUXILIARES
 # ============================================
@@ -6760,3 +6759,4 @@ try {
 # ============================================
 # FIN DEL SCRIPT
 # ============================================
+
